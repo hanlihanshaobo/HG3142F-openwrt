@@ -21,7 +21,8 @@
 
 	chosen {
 		stdout-path = "serial0:115200n8";
-		bootargs = "console=ttyS0,115200 earlycon";
+		/* 原厂实测控制台就是 ttyAMA0（PL011），不是 ttyS0 */
+		bootargs = "console=ttyAMA0,115200 earlycon";
 	};
 
 	/* 512 MiB @ 0x0（BCM6855x 起始地址，若 DDR 训练不同需按实机 dmesg 修正） */
