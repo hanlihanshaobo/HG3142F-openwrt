@@ -99,6 +99,25 @@ jobs:
           done
           grep -E "CONFIG_TARGET_|CONFIG_KERNEL_" .config | head -20
 
+      - name: Kernel config diagnose
+        continue-on-error: true
+        run: |
+          cd sources/openwrt
+          # 让 OpenWrt 先解包/打补丁内核，方便查看 Kconfig
+          make target/linux/prepare V=s 2>&1 | tail -20 || true
+          KDIR=$(find build_dir -maxdepth 4 -type d -name 'linux-6.18*' | head -1)
+          echo "KDIR=$KDIR" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$KDIR" ]; then
+            for f in $(find "$KDIR/arch/arm" -maxdepth 2 -name Kconfig | head -10); do
+              if grep -q BCMCA "$f"; then
+                echo "### $f" >> "$GITHUB_STEP_SUMMARY"
+                echo '```' >> "$GITHUB_STEP_SUMMARY"
+                sed -n '/BCMCA/,+45p' "$f" >> "$GITHUB_STEP_SUMMARY"
+                echo '```' >> "$GITHUB_STEP_SUMMARY"
+              fi
+            done
+          fi
+
       - name: Download package sources
         if: ${{ !inputs.skip_download }}
         run: |
