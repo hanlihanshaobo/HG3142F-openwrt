@@ -72,6 +72,15 @@ jobs:
           key: openwrt-dl-${{ hashFiles('port/sources.lock.json') }}
           restore-keys: openwrt-dl-
 
+      - name: Cache toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            sources/openwrt/staging_dir
+            sources/openwrt/build_dir/toolchain-*
+          key: openwrt-tc-${{ hashFiles('port/sources.lock.json', 'port/overlay/target/linux/bcmbca/generic/target.mk', 'port/overlay/target/linux/bcmbca/Makefile') }}
+          restore-keys: openwrt-tc-
+
       - name: Update and install feeds
         run: |
           cd sources/openwrt
