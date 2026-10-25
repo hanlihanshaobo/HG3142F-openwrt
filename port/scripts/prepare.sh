@@ -18,12 +18,15 @@ echo "==> 目标目录: $DEST"
 if [ -d "$DEST/.git" ]; then
 	echo "==> 复用已有源码树"
 	git -C "$DEST" fetch --depth 1 origin "$SRC_REF" || git -C "$DEST" fetch origin
-	git -C "$DEST" checkout -q --detach "$SRC_REF"
+	git -C "$DEST" checkout -q --detach FETCH_HEAD 2>/dev/null || git -C "$DEST" checkout -q --detach "$SRC_REF"
 else
 	rm -rf "$DEST"
-	mkdir -p "$(dirname "$DEST")"
-	git clone --filter=blob:none "$SRC_URL" "$DEST"
-	git -C "$DEST" checkout -q --detach "$SRC_REF"
+	mkdir -p "$DEST"
+	git -C "$DEST" init -q
+	git -C "$DEST" remote add origin "$SRC_URL"
+	# 按 commit sha 浅拉，比全量 clone 快一个数量级
+	git -C "$DEST" fetch --depth 1 origin "$SRC_REF"
+	git -C "$DEST" checkout -q -b "port/mb4784w" FETCH_HEAD
 fi
 
 echo "==> 叠加 overlay（target/linux/bcmbca、base-files 等）"
@@ -42,4 +45,9 @@ fi
 
 echo "==> 完成"
 git -C "$DEST" show -s --format='    %H %cI %s'
-ls "$DEST/target/linux" | grep -x bcmbca >/dev/null && echo "    target/linux/bcmbca 已就位"
+if ls "$DEST/target/linux" | grep -qx bcmbca; then
+	echo "    target/linux/bcmbca 已就位"
+else
+	echo "    警告: target/linux/bcmbca 未就位（overlay 未叠加成功？）" >&2
+	exit 1
+fi
