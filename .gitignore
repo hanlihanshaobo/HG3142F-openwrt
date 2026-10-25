@@ -1,0 +1,13 @@
+# 上游源码与构建产物
+sources/
+out/
+artifacts/
+*.o
+*.bin
+!port/**/*.bin
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
+.DS_Store

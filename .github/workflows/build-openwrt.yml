@@ -1,0 +1,134 @@
+name: Build OpenWrt firmware
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      config_file:
+        description: '可选：仓库内自定义 .config（默认 port/configs/mb4784w.config）'
+        required: false
+        default: ''
+      openwrt_ref:
+        description: '可选：覆盖 port/sources.lock.json 的 openwrt commit'
+        required: false
+        default: ''
+      skip_download:
+        description: '跳过 make download（缓存已全时省时间）'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: openwrt-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  firmware:
+    name: bcmbca / HG3142F
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      CONFIG_FILE: ${{ inputs.config_file || 'port/configs/mb4784w.config' }}
+      OPENWRT_REF_OVERRIDE: ${{ inputs.openwrt_ref }}
+      TZ: Asia/Shanghai
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space and add swap
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/hostedtoolcache/CodeQL /usr/share/dotnet 2>/dev/null || true
+          sudo apt-get purge -y 'dotnet*' 'aspnetcore*' 'llvm-*' 'clang-*' 2>/dev/null || true
+          sudo apt-get autoremove -y 2>/dev/null || true
+          sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang-18 llvm-18 lld-18 flex bison gawk gettext \
+            git libncurses-dev libssl-dev python3 python3-setuptools python3-pyelftools python3-dev \
+            rsync unzip zlib1g-dev file wget curl device-tree-compiler u-boot-tools swig \
+            libelf-dev libfuse-dev pkgconf bc ecj fastjar jar time subversion
+          sudo apt-get clean
+
+      - name: Prepare OpenWrt source with bcmbca overlay
+        run: |
+          sh port/scripts/prepare.sh sources/openwrt
+          cd sources/openwrt
+          echo "OpenWrt commit: $(git rev-parse HEAD)"
+          ls target/linux | grep -x bcmbca
+
+      - name: Cache download directory
+        uses: actions/cache@v4
+        with:
+          path: sources/openwrt/dl
+          key: openwrt-dl-${{ hashFiles('port/sources.lock.json') }}
+          restore-keys: openwrt-dl-
+
+      - name: Update and install feeds
+        run: |
+          cd sources/openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Configure
+        run: |
+          cd sources/openwrt
+          cp "../../${CONFIG_FILE}" .config
+          make defconfig
+          echo "=== 关键配置校验 ==="
+          for k in CONFIG_TARGET_bcmbca=y CONFIG_TARGET_bcmbca_generic=y \
+                   CONFIG_TARGET_bcmbca_generic_DEVICE_fiberhome_mb4784w=y; do
+            grep -qx "$k" .config || { echo "::error::缺少 $k（target 骨架或 device 定义未生效）"; exit 1; }
+          done
+          grep -E "CONFIG_TARGET_|CONFIG_KERNEL_" .config | head -20
+
+      - name: Download package sources
+        if: ${{ !inputs.skip_download }}
+        run: |
+          cd sources/openwrt
+          make download -j8 || make download -j1 V=s
+
+      - name: Build
+        run: |
+          cd sources/openwrt
+          make -j$(nproc) || make -j1 V=s
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p out
+          find sources/openwrt/bin/targets -type f \( -name '*.bin' -o -name '*.ubi' -o -name '*.tar' \
+            -o -name '*.itb' -o -name 'profiles.json' -o -name 'sha256sums' \) \
+            -exec cp -v {} out/ \;
+          ( cd out && sha256sum * > SHA256SUMS 2>/dev/null || true )
+          ls -lh out/
+
+      - name: Show build log tail on failure
+        if: failure()
+        run: |
+          find sources/openwrt/logs -name '*.txt' 2>/dev/null | head -5 | xargs -r tail -n 60
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-mb4784w-${{ github.run_number }}
+          path: out/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" out/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "HG3142F OpenWrt ${GITHUB_REF_NAME}" \
+            --notes "自动构建产物。**实验性**：bcmbca target 仍在移植中，刷机前核对 SHA256SUMS，并保留 mtd1 loader 原始备份。" \
+            --prerelease || gh release upload "${GITHUB_REF_NAME}" out/* --clobber

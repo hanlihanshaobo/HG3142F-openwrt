@@ -1,0 +1,15 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+. /lib/functions/uci-defaults.sh
+
+board_config_update
+
+case "$(board_name)" in
+fiberhome,mb4784w)
+	# 4 个千兆 LAN 口（阶段 3 拿到 switch 驱动后再细化 vlan 划分）
+	ucidef_set_interface_lan "lan1 lan2 lan3 lan4" "dhcp"
+	;;
+esac
+
+board_config_flush
+exit 0

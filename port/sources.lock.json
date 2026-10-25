@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "selected_on": "2026-10-25",
+  "_comment": "锁定的上游源码，保证构建可复现。改这里等于改固件基线。",
+  "openwrt": {
+    "url": "https://github.com/openwrt/openwrt.git",
+    "ref_observed": "refs/heads/main",
+    "commit": "a27b155e89c3470d92077b8fc7992c18732332e9",
+    "kernel": "6.18",
+    "note": "主线。若需更稳可切 openwrt-25.12 (f3f5c2e54bf432b444e36b1a77077ff476361825)"
+  },
+  "uboot": {
+    "url": "https://github.com/u-boot/u-boot.git",
+    "ref": "v2024.04",
+    "note": "主线 configs/bcm96855_defconfig + arch/arm/dts/bcm6855.dtsi，Broadcom 于 2022-08 上游化；RAM 引导用，NAND 启动仍依赖厂商 SPL/TPL"
+  },
+  "references": {
+    "ponwrt_tyfza1": "https://github.com/LeoooChen/PonWRT-TYFZA1",
+    "uboot_tyfza1": "https://github.com/LeoooChen/U-Boot-TYFZA1",
+    "ponwrt_an758x": "https://github.com/pbs05/ponwrt",
+    "uboot_an758x": "https://github.com/pbs05/uboot-an758x",
+    "stock2ubi": "https://github.com/pbs05/an758x-stock2ubi"
+  },
+  "device": {
+    "vendor": "FiberHome",
+    "model": "HG3142F",
+    "soc": "bcm96855",
+    "soc_family": "BCM6855x / BCMBCA",
+    "cpu": "3 x Cortex-A7 (ARMv7)",
+    "ram": "512MiB",
+    "nand": "256MiB",
+    "sn_reference": "071604000590814",
+    "partition_layout": {
+      "loader": "2MiB @0x0000000",
+      "image": "164MiB @0x0200000 (UBI: bootfs1/rootfs1/bootfs2/rootfs2/felix1/felix2)",
+      "ipg": "87MiB @0x0A600000",
+      "factory": "2MiB @0x0FD00000"
+    }
+  }
+}

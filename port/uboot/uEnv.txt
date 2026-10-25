@@ -1,0 +1,15 @@
+# HG3142F U-Boot 环境变量草稿（勿直接 saveenv，先 setenv 试）
+# 用法：U-Boot 控制台里逐条 setenv，或 tftp 下载后 env import -t
+
+# ---- 网口调试（TFTP 加载 initramfs）----
+ipaddr=192.168.1.10
+serverip=192.168.1.2
+netmask=255.255.255.0
+loadaddr=0x01000000
+
+# 阶段 1：网络启动，不碰 flash
+tftpboot_initramfs=tftp ${loadaddr} openwrt-initramfs.bin; bootm ${loadaddr}
+tftpboot_kernel=tftp ${loadaddr} zImage; tftp ${fdtaddr} bcm96855-mb4784w.dtb; bootz ${loadaddr} - ${fdtaddr}
+
+# ---- 阶段 2：从 UBI 启动（待卷布局确定后启用）----
+# bootargs=console=ttyS0,115200 ubi.mtd=image root=/dev/ubiblock0_0 rootfstype=squashfs rootwait

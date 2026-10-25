@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * FiberHome HG3142F (Broadcom BCM6855x / bcm96855)
+ *
+ * 依据实机全量备份（SN 071604000590814）还原：
+ *   - SoC: 3 x Cortex-A7, 512MiB DDR
+ *   - NAND: 256MiB, brcmnand, 128KiB 擦除块
+ *   - 分区表见下方 nand partitions（与 /proc/mtd 实测一致）
+ *
+ * 注意：本 DTS 的第一目标是「串口能起来 + NAND 能识别」，
+ *      网口/PON/WiFi 节点在阶段 3 补充。
+ */
+
+/dts-v1/;
+
+#include "broadcom/bcm6855.dtsi"
+
+/ {
+	model = "FiberHome HG3142F";
+	compatible = "fiberhome,mb4784w", "brcm,bcm96855", "brcm,bcm6855", "brcm,bcmbca";
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+		bootargs = "console=ttyS0,115200 earlycon";
+	};
+
+	/* 512 MiB @ 0x0（BCM6855x 起始地址，若 DDR 训练不同需按实机 dmesg 修正） */
+	memory@0 {
+		device_type = "memory";
+		reg = <0x00000000 0x20000000>;
+	};
+};
+
+&nand {
+	status = "okay";
+
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		/* 厂商 U-Boot（SPL+TPL+u-boot 2019.07），只读，勿写 */
+		partition@0 {
+			label = "loader";
+			reg = <0x00000000 0x00200000>;
+			read-only;
+		};
+
+		/* 主镜像区：原厂为 UBI（bootfs1/rootfs1/bootfs2/rootfs2/felix1/felix2） */
+		partition@200000 {
+			label = "image";
+			reg = <0x00200000 0x0a400000>;
+		};
+
+		/* 厂商 IPG 区，本固件不使用 */
+		partition@a600000 {
+			label = "ipg";
+			reg = <0x0a600000 0x05700000>;
+			read-only;
+		};
+
+		/* 出厂数据：光学校准、SN、MAC 等，只读挂载备用 */
+		partition@fd00000 {
+			label = "factory";
+			reg = <0x0fd00000 0x00200000>;
+			read-only;
+		};
+	};
+};
