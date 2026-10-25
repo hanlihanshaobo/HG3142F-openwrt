@@ -1,8 +1,10 @@
-# HG3142F-lede
+# HG3142F-openwrt
 
 烽火 **HG3142F**（ONU 光猫，Broadcom **BCM6855x** / `bcm96855`）的 OpenWrt 适配仓库。
 
 基于 **openwrt/openwrt 主线（锁定提交）** + `port/overlay` 叠层，GitHub Actions 在线构建。工程结构参考了几个已成功的光猫移植项目（见下方「参考项目」）。
+
+> U-Boot / 引导程序工作在独立仓库：[**HG3142F-uboot**](https://github.com/hanlihanshaobo/HG3142F-uboot)
 
 ---
 
@@ -34,15 +36,13 @@
 
 ```
 .github/workflows/
-  build-openwrt.yml       # 主固件：拉 openwrt 主线 + 叠 port/overlay + 构建 + 发 Release
-  build-uboot.yml         # 主线 U-Boot bcm96855 构建（RAM 引导用）
+  build-openwrt.yml       # 拉 openwrt 主线 + 叠 port/overlay + 构建 + 发 Release
 port/
   sources.lock.json       # 上游源码与设备信息（pin 提交，保证可复现）
   scripts/prepare.sh      # 拉源码 + 叠 overlay + 打补丁
   configs/mb4784w.config  # 设备 .config 片段
   overlay/                # 直接覆盖到 openwrt 源码树
     target/linux/bcmbca/  # 自建 target：Makefile / image / dts / base-files
-  uboot/                  # U-Boot 板级改动与环境变量草稿
   patches/                # 对 openwrt 源码的补丁（当前为空）
   docs/                   # 硬件事实、移植计划
 ```
