@@ -127,7 +127,8 @@ jobs:
       - name: Build
         run: |
           cd sources/openwrt
-          make -j$(nproc) || make -j1 V=s
+          # yes "" 让 kconfig 对新符号自动接受默认值，避免非交互环境卡在提问
+          yes "" | make -j$(nproc) || make -j1 V=s
 
       - name: Collect artifacts
         run: |
