@@ -207,14 +207,14 @@ jobs:
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${GITHUB_REF_NAME}" out/* \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "HG3142F OpenWrt ${GITHUB_REF_NAME}" \
-            --notes "自动构建产物。**实验性**：bcmbca target 仍在移植中，刷机前核对 SHA256SUMS，并保留 mtd1 loader 原始备份。" \
-            --prerelease || gh release upload "${GITHUB_REF_NAME}" out/* --clobber
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          name: HG3142F OpenWrt ${{ github.ref_name }}
+          files: out/*
+          body: |
+            自动构建产物。**实验性**：bcmbca target 仍在移植中，刷机前核对 SHA256SUMS，
+            并保留 mtd1 loader 原始备份。
 
       # 缓存必须在构建之后保存：此时 staging_dir / dl 才真正存在
       - name: Save download directory cache
