@@ -118,6 +118,8 @@ jobs:
       - name: Generate complete kernel config
         run: |
           cd sources/openwrt
+          TOP="$(pwd)"
+          exec > >(tee "$TOP/config.log") 2>&1
           # 先让 OpenWrt 解包内核
           make target/linux/prepare V=s 2>&1 | tail -5 || true
 
@@ -128,14 +130,15 @@ jobs:
             exit 1
           fi
 
-          CFG="$(pwd)/target/linux/bcmbca/config-6.18"
-          TOP="$(pwd)"
-          cd "$KDIR"
+          CFG="$TOP/target/linux/bcmbca/config-6.18"
 
-          # 1) 用主线 ARMv7 defconfig 生成基础配置
-          make ARCH=arm multi_v7_defconfig
+          # 1) 复刻 OpenWrt 的合并：generic/config-6.18 + target/config-6.18
+          #    直接用内核自己的 .config 解析器（同名符号后者覆盖前者），
+          #    避开 kconfig.pl 对参数个数的严格要求
+          cat target/linux/generic/config-6.18 target/linux/bcmbca/config-6.18 > "$KDIR/.config"
 
           # 2) 打开本机需要的 BCMBCA / 外设选项
+          cd "$KDIR"
           ./scripts/config --file .config \
             --enable ARCH_BCM \
             --enable ARCH_BCMBCA \
@@ -156,25 +159,13 @@ jobs:
             --enable CLK_BCM_63XX \
             --disable MTD_BRCM_U_BOOT
 
-          # 3) 先把我们的选择写进 target 配置
-          cp .config "$CFG"
-
-          # 4) 复刻 OpenWrt 的合并方式：generic/config-6.18 + target/config-6.18
-          #    （kconfig.pl 只输出「输入里出现过的符号」，所以后面还要让内核补齐）
-          cd "$TOP"
-          ./scripts/kconfig.pl 'm+' '+' \
-            target/linux/generic/config-6.18 \
-            target/linux/bcmbca/config-6.18 > "$KDIR/.config"
-
-          # 5) olddefconfig 不会提问：把所有「因依赖变可见」的符号按默认值补齐
-          cd "$KDIR"
+          # 3) olddefconfig 永不提问：把所有「因依赖变可见」的符号按默认值补齐
           make ARCH=arm olddefconfig
 
-          # 6) 把完整结果写回 target 配置 → 下次构建 syncconfig 就没有新符号可问
+          # 4) 写回 target 配置 → 构建时 syncconfig 就没有新符号可问
           cp .config "$CFG"
-          echo "配置行数: $(wc -l < $CFG)" >> "$GITHUB_STEP_SUMMARY"
+          echo "配置行数: $(wc -l < "$CFG")" >> "$GITHUB_STEP_SUMMARY"
           grep -E '^CONFIG_(ARCH_BCM|ARCH_BCMBCA|ARCH_BCMBCA_CORTEXA7|SERIAL_AMBA_PL011|MTD_NAND_BRCMNAND|ARM_LPAE|NR_CPUS|SMP)' "$CFG" >> "$GITHUB_STEP_SUMMARY" || true
-          grep -cE '^# CONFIG_.* is not set' "$CFG" >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: Download package sources
         if: ${{ !inputs.skip_download }}
@@ -199,6 +190,9 @@ jobs:
             echo
             echo "=== 日志尾部 ==="
             tail -80 build.log 2>/dev/null || true
+            echo
+            echo "=== 配置步骤日志尾部 ==="
+            tail -40 config.log 2>/dev/null || true
           } > ../../build_error.txt 2>/dev/null || true
           echo "build_error.txt 行数: $(wc -l < ../../build_error.txt 2>/dev/null || echo 0)"
 
