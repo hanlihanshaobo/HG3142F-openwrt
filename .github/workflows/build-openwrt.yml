@@ -112,7 +112,7 @@ jobs:
             exit 1
           fi
 
-          CFG=target/linux/bcmbca/config-6.18
+          CFG="$(pwd)/target/linux/bcmbca/config-6.18"
           cd "$KDIR"
 
           # 1) 用主线 ARMv7 defconfig 生成「每个符号都有值」的完整配置
@@ -143,8 +143,8 @@ jobs:
           yes "" | make ARCH=arm oldconfig
 
           # 4) 导出为 target 的内核配置
-          cp .config "../$CFG"
-          cd ../..
+          cp .config "$CFG"
+          cd "$(dirname "$(dirname "$CFG")")"
           echo "生成配置行数: $(wc -l < $CFG)" >> "$GITHUB_STEP_SUMMARY"
           grep -E '^CONFIG_(ARCH_BCM|ARCH_BCMBCA|ARCH_BCMBCA_CORTEXA7|SERIAL_AMBA_PL011|MTD_NAND_BRCMNAND|ARM_LPAE|NR_CPUS|SMP)' "$CFG" >> "$GITHUB_STEP_SUMMARY" || true
 
