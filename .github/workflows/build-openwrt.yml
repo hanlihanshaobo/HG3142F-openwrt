@@ -72,13 +72,6 @@ jobs:
           key: openwrt-dl-${{ hashFiles('port/sources.lock.json') }}
           restore-keys: openwrt-dl-
 
-      - name: Save download directory cache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: sources/openwrt/dl
-          key: openwrt-dl-${{ hashFiles('port/sources.lock.json') }}
-
       - name: Restore toolchain cache
         uses: actions/cache/restore@v4
         with:
@@ -87,15 +80,6 @@ jobs:
             sources/openwrt/build_dir/toolchain-*
           key: openwrt-tc-${{ hashFiles('port/sources.lock.json') }}
           restore-keys: openwrt-tc-
-
-      - name: Save toolchain cache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            sources/openwrt/staging_dir
-            sources/openwrt/build_dir/toolchain-*
-          key: openwrt-tc-${{ hashFiles('port/sources.lock.json') }}
 
       - name: Update and install feeds
         run: |
@@ -231,3 +215,20 @@ jobs:
             --title "HG3142F OpenWrt ${GITHUB_REF_NAME}" \
             --notes "自动构建产物。**实验性**：bcmbca target 仍在移植中，刷机前核对 SHA256SUMS，并保留 mtd1 loader 原始备份。" \
             --prerelease || gh release upload "${GITHUB_REF_NAME}" out/* --clobber
+
+      # 缓存必须在构建之后保存：此时 staging_dir / dl 才真正存在
+      - name: Save download directory cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: sources/openwrt/dl
+          key: openwrt-dl-${{ hashFiles('port/sources.lock.json') }}
+
+      - name: Save toolchain cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            sources/openwrt/staging_dir
+            sources/openwrt/build_dir/toolchain-*
+          key: openwrt-tc-${{ hashFiles('port/sources.lock.json') }}
