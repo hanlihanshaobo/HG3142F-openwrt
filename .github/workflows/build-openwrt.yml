@@ -99,35 +99,54 @@ jobs:
           done
           grep -E "CONFIG_TARGET_|CONFIG_KERNEL_" .config | head -20
 
-      - name: Auto-fill kernel config (BCMCA symbols)
+      - name: Generate complete kernel config
         run: |
           cd sources/openwrt
-          # 先让 OpenWrt 解包内核，才能读到真实 Kconfig
+          # 先让 OpenWrt 解包内核
           make target/linux/prepare V=s 2>&1 | tail -5 || true
 
           KDIR=$(find build_dir -maxdepth 4 -type d -name 'linux-6.18*' | head -1)
           echo "KDIR=$KDIR" >> "$GITHUB_STEP_SUMMARY"
-          CFG=target/linux/bcmbca/config-6.18
-          test -f "$CFG" || { echo "::error::缺少 $CFG"; exit 1; }
-
-          if [ -n "$KDIR" ]; then
-            # 抽出所有 ARCH_BCM* 符号（BCMCA 子平台、63xx 等）
-            SYMS=$(grep -rhoE '^\s*config +ARCH_BCM[A-Z0-9_]*' "$KDIR/arch/arm" --include=Kconfig* \
-                   | awk '{print $2}' | sort -u)
-            echo "找到 BCMBCA 符号: $(echo $SYMS | tr '\n' ' ')" >> "$GITHUB_STEP_SUMMARY"
-            for sym in $SYMS; do
-              if ! grep -qE "^CONFIG_$sym=|^# CONFIG_$sym is not set" "$CFG"; then
-                echo "# CONFIG_$sym is not set" >> "$CFG"
-              fi
-            done
-            # 我们的 SoC 是 Cortex-A7，必须打开
-            sed -i 's/^# CONFIG_ARCH_BCMBCA_CORTEXA7 is not set$/CONFIG_ARCH_BCMBCA_CORTEXA7=y/' "$CFG"
+          if [ -z "$KDIR" ]; then
+            echo "::error::没找到内核目录，无法生成配置"
+            exit 1
           fi
 
-          echo "--- 补全后的 BCMBCA 相关行 ---" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          grep -E 'ARCH_BCMBCA|ARCH_BCM=' "$CFG" >> "$GITHUB_STEP_SUMMARY" || true
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          CFG=target/linux/bcmbca/config-6.18
+          cd "$KDIR"
+
+          # 1) 用主线 ARMv7 defconfig 生成「每个符号都有值」的完整配置
+          make ARCH=arm multi_v7_defconfig
+
+          # 2) 打开本机需要的 BCMBCA / 外设选项
+          ./scripts/config --file .config \
+            --enable ARCH_BCM \
+            --enable ARCH_BCMBCA \
+            --enable ARCH_BCMBCA_CORTEXA7 \
+            --enable ARM_LPAE \
+            --enable SMP \
+            --set-val NR_CPUS 3 \
+            --enable ARM_AMBA \
+            --enable SERIAL_AMBA_PL011 \
+            --enable SERIAL_AMBA_PL011_CONSOLE \
+            --enable MTD \
+            --enable MTD_NAND_BRCMNAND \
+            --enable MTD_NAND_BRCMNAND_BCMBCA \
+            --enable MTD_UBI \
+            --enable MTD_UBI_BLOCK \
+            --enable MTD_CMDLINE_PARTS \
+            --enable PINCTRL_BCM63XX \
+            --enable CLK_BCM_63XX \
+            --disable MTD_BRCM_U_BOOT
+
+          # 3) 非交互解析依赖（所有新符号取默认值，不会再卡住）
+          yes "" | make ARCH=arm oldconfig
+
+          # 4) 导出为 target 的内核配置
+          cp .config "../$CFG"
+          cd ../..
+          echo "生成配置行数: $(wc -l < $CFG)" >> "$GITHUB_STEP_SUMMARY"
+          grep -E '^CONFIG_(ARCH_BCM|ARCH_BCMBCA|ARCH_BCMBCA_CORTEXA7|SERIAL_AMBA_PL011|MTD_NAND_BRCMNAND|ARM_LPAE|NR_CPUS|SMP)' "$CFG" >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: Download package sources
         if: ${{ !inputs.skip_download }}
