@@ -99,24 +99,35 @@ jobs:
           done
           grep -E "CONFIG_TARGET_|CONFIG_KERNEL_" .config | head -20
 
-      - name: Kernel config diagnose
-        continue-on-error: true
+      - name: Auto-fill kernel config (BCMCA symbols)
         run: |
           cd sources/openwrt
-          # 让 OpenWrt 先解包/打补丁内核，方便查看 Kconfig
-          make target/linux/prepare V=s 2>&1 | tail -20 || true
+          # 先让 OpenWrt 解包内核，才能读到真实 Kconfig
+          make target/linux/prepare V=s 2>&1 | tail -5 || true
+
           KDIR=$(find build_dir -maxdepth 4 -type d -name 'linux-6.18*' | head -1)
           echo "KDIR=$KDIR" >> "$GITHUB_STEP_SUMMARY"
+          CFG=target/linux/bcmbca/config-6.18
+          test -f "$CFG" || { echo "::error::缺少 $CFG"; exit 1; }
+
           if [ -n "$KDIR" ]; then
-            for f in $(find "$KDIR/arch/arm" -maxdepth 2 -name Kconfig | head -10); do
-              if grep -q BCMCA "$f"; then
-                echo "### $f" >> "$GITHUB_STEP_SUMMARY"
-                echo '```' >> "$GITHUB_STEP_SUMMARY"
-                sed -n '/BCMCA/,+45p' "$f" >> "$GITHUB_STEP_SUMMARY"
-                echo '```' >> "$GITHUB_STEP_SUMMARY"
+            # 抽出所有 ARCH_BCM* 符号（BCMCA 子平台、63xx 等）
+            SYMS=$(grep -rhoE '^\s*config +ARCH_BCM[A-Z0-9_]*' "$KDIR/arch/arm" --include=Kconfig* \
+                   | awk '{print $2}' | sort -u)
+            echo "找到 BCMBCA 符号: $(echo $SYMS | tr '\n' ' ')" >> "$GITHUB_STEP_SUMMARY"
+            for sym in $SYMS; do
+              if ! grep -qE "^CONFIG_$sym=|^# CONFIG_$sym is not set" "$CFG"; then
+                echo "# CONFIG_$sym is not set" >> "$CFG"
               fi
             done
+            # 我们的 SoC 是 Cortex-A7，必须打开
+            sed -i 's/^# CONFIG_ARCH_BCMBCA_CORTEXA7 is not set$/CONFIG_ARCH_BCMBCA_CORTEXA7=y/' "$CFG"
           fi
+
+          echo "--- 补全后的 BCMBCA 相关行 ---" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E 'ARCH_BCMBCA|ARCH_BCM=' "$CFG" >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Download package sources
         if: ${{ !inputs.skip_download }}
