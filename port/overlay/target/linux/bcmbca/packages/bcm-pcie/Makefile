@@ -35,11 +35,7 @@ PCIE_DIR:=$(SDK_DIR)/sdk/bcmdrivers/opensource/bus/pci/host/impl1
 
 define Build/Prepare
 	$(INSTALL_DIR) $(PKG_BUILD_DIR)
-	$(CP) $(PCIE_DIR)/pcie-bcm963xx.c $(PCIE_DIR)/pcie-bcm963xx.h \
-	      $(PCIE_DIR)/pcie_hcd.c $(PCIE_DIR)/pcie_hcd.h \
-	      $(PCIE_DIR)/pcie-vcore.c $(PCIE_DIR)/pcie-vcore.h \
-	      $(PCIE_DIR)/pcie-vdev.h \
-	      $(PKG_BUILD_DIR)/
+	$(CP) $(PCIE_DIR)/*.c $(PCIE_DIR)/*.h $(PKG_BUILD_DIR)/
 	$(CP) $(SDK_DIR)/compat/pcie_stubs.c $(PKG_BUILD_DIR)/
 	sed -e 's|@SDK_DIR@|$(SDK_DIR)/sdk|g' $(CURDIR)/src/Makefile.in > $(PKG_BUILD_DIR)/Makefile
 endef

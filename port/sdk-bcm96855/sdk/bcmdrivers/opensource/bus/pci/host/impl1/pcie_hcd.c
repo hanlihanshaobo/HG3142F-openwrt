@@ -58,6 +58,8 @@
 /* pcie_hcd */
 #include <pcie_hcd.h>
 #include <pcie-vcore.h>
+/* compat(6.x): 旧 MSI API 的最小占位定义 */
+#include "pcie_hcd_msi_compat.h"
 
 /*
  * +-----------------------------------------------------
@@ -1021,8 +1023,8 @@ static int pcie_hcd_msi_setup_irq_range(struct msi_controller *chip,
 	for (i = 0; i < nvec; i++) {
 	    BcmHalSetMsiIrqDescOff(irq, i, desc);
 	}
-	desc->nvec_used = nvec;
-	desc->msi_attrib.multiple = order_base_2(nvec);
+	/* compat(6.x): desc->nvec_used 已移除 */
+	/* compat(6.x): desc->msi_attrib.multiple 已移除 */
 
 	/* Configure the hardware for MSI */
 	msg.address_lo = MSI_MATCH_ADDR_MAGIC;
@@ -1090,7 +1092,7 @@ static int pcie_hcd_msi_setup_irqs(struct msi_controller *chip,
 	    HCD_FN_RET_VAL(-EINVAL);
 	}
 
-#if defined(CONFIG_PCI_MSI)
+#if 0 /* compat(6.x): dev.msi_list/pdev->msi_list 已移入 msi_device_data */
 	/* Get the MSI descriptor pointer */
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
 	WARN_ON(!list_is_singular(&pdev->dev.msi_list));
@@ -2502,7 +2504,7 @@ static int pcie_hcd_probe(struct platform_device *pdev)
 	        }
 	    }
 
-	    if (IS_ENABLED(CONFIG_PCI_MSI) && pdrv->core.cfg.msi) {
+	    if (0 && pdrv->core.cfg.msi) { /* compat(6.x): 暂不启用 MSI */
 	        err = pcie_hcd_msi_setup(pdrv);
 	        if (err < 0) {
 	            HCD_ERROR("failed to enable MSI support: %d\n", err);
@@ -2514,10 +2516,10 @@ static int pcie_hcd_probe(struct platform_device *pdev)
 	    {
 	        struct pci_host_bridge *bridge = to_pci_host_bridge(bus->bridge);
 
-#ifdef CONFIG_PCI_MSI
+#if 0 /* compat(6.x): bridge->msi/bus->msi 已删除，MSI 注册裁掉，走 INTx */
 	        bridge->msi = (struct msi_controller*)pdrv->msi;
 	        bus->msi = bridge->msi;
-#endif /* CONFIG_PCI_MSI */
+#endif
 	        bridge->map_irq = pcie_hcd_map_irq;
 	        bridge->swizzle_irq = pci_common_swizzle;
 
