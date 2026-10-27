@@ -34,6 +34,50 @@
 		device_type = "memory";
 		reg = <0x00000000 0x20000000>;
 	};
+
+	/*
+	 * PCIe 主机控制器（2 个）
+	 * 数据取自实机原厂设备树 orig_968552CREF_CM_XG.dts：
+	 *   pcie@0 → domain 1，GIC SPI 43，窗口 0xc0000000（BCM6710 WiFi）
+	 *   pcie@1 → domain 2，GIC SPI 44，窗口 0xd0000000（RTL8125 2.5G 网卡）
+	 */
+	pcie@0 {
+		compatible = "brcm,bcm963xx-pcie";
+		device_type = "pci";
+		reg = <0x80040000 0xa000>;
+
+		#address-cells = <3>;
+		#size-cells = <2>;
+		ranges = <0x2000000 0x0 0xc0000000 0xc0000000 0x0 0x10000000>;
+
+		interrupt-names = "intr";
+		interrupts = <0 43 4>;
+		#interrupt-cells = <1>;
+		interrupt-map = <0 0 0 0 0x1 0 43 4>;
+
+		brcm,coreid = <0>;
+		linux,pci-domain = <1>;
+		status = "okay";
+	};
+
+	pcie@1 {
+		compatible = "brcm,bcm963xx-pcie";
+		device_type = "pci";
+		reg = <0x80050000 0xa000>;
+
+		#address-cells = <3>;
+		#size-cells = <2>;
+		ranges = <0x2000000 0x0 0xd0000000 0xd0000000 0x0 0x10000000>;
+
+		interrupt-names = "intr";
+		interrupts = <0 44 4>;
+		#interrupt-cells = <1>;
+		interrupt-map = <0 0 0 0 0x1 0 44 4>;
+
+		brcm,coreid = <1>;
+		linux,pci-domain = <2>;
+		status = "okay";
+	};
 };
 
 /* 串口：上游默认 disabled */
@@ -53,81 +97,35 @@
 	brcm,nand-ecc-use-strap;
 
 	partitions {
-		compatible = "fixed-partitions";
-		#address-cells = <1>;
-		#size-cells = <1>;
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
 
-		/* 厂商 loader（SPL+TPL+U-Boot 2019.07），只读，勿写 */
-		loader@0 {
-			label = "loader";
-			reg = <0x00000000 0x00200000>;
-			read-only;
+			/* 厂商 loader（SPL+TPL+U-Boot 2019.07），只读，勿写 */
+			loader@0 {
+				label = "loader";
+				reg = <0x00000000 0x00200000>;
+				read-only;
+			};
+
+			/* 主镜像区：原厂为 UBI（bootfs1/rootfs1/bootfs2/rootfs2/felix1/felix2） */
+			image@200000 {
+				label = "image";
+				reg = <0x00200000 0x0a400000>;
+			};
+
+			/* 厂商 IPG 区，本固件不使用 */
+			ipg@a600000 {
+				label = "ipg";
+				reg = <0x0a600000 0x05700000>;
+				read-only;
+			};
+
+			/* 出厂数据：光学校准、SN、MAC 等 */
+			factory@fd00000 {
+				label = "factory";
+				reg = <0x0fd00000 0x00200000>;
+				read-only;
+			};
 		};
-
-		/* 主镜像区：原厂为 UBI（bootfs1/rootfs1/bootfs2/rootfs2/felix1/felix2） */
-		image@200000 {
-			label = "image";
-			reg = <0x00200000 0x0a400000>;
-		};
-
-		/* 厂商 IPG 区，本固件不使用 */
-		ipg@a600000 {
-			label = "ipg";
-			reg = <0x0a600000 0x05700000>;
-			read-only;
-		};
-
-		/* 出厂数据：光学校准、SN、MAC 等 */
-		factory@fd00000 {
-			label = "factory";
-			reg = <0x0fd00000 0x00200000>;
-			read-only;
-		};
-	};
-/*
- * PCIe 主机控制器（2 个）
- *
- * 数据全部取自实机原厂设备树 orig_968552CREF_CM_XG.dts：
- *   pcie@0 → domain 1，GIC SPI 43，MMIO 窗口 0xc0000000（挂 BCM6710 WiFi）
- *   pcie@1 → domain 2，GIC SPI 44，MMIO 窗口 0xd0000000（挂 RTL8125 2.5G 网卡）
- *
- * 驱动为 Broadcom GPL 的 pcie-bcm963xx（asuswrt 5.04axhnd.675x / BCM96855 平台）
- */
-pcie@0 {
-	compatible = "brcm,bcm963xx-pcie";
-	device_type = "pci";
-	reg = <0x80040000 0xa000>;
-
-	#address-cells = <3>;
-	#size-cells = <2>;
-	ranges = <0x2000000 0x0 0xc0000000 0xc0000000 0x0 0x10000000>;
-
-	interrupt-names = "intr";
-	interrupts = <0 43 4>;
-	#interrupt-cells = <1>;
-	interrupt-map = <0 0 0 0 0x1 0 43 4>;
-
-	brcm,coreid = <0>;
-	linux,pci-domain = <1>;
-	status = "okay";
-};
-
-pcie@1 {
-	compatible = "brcm,bcm963xx-pcie";
-	device_type = "pci";
-	reg = <0x80050000 0xa000>;
-
-	#address-cells = <3>;
-	#size-cells = <2>;
-	ranges = <0x2000000 0x0 0xd0000000 0xd0000000 0x0 0x10000000>;
-
-	interrupt-names = "intr";
-	interrupts = <0 44 4>;
-	#interrupt-cells = <1>;
-	interrupt-map = <0 0 0 0 0x1 0 44 4>;
-
-	brcm,coreid = <1>;
-	linux,pci-domain = <2>;
-	status = "okay";
-};
 };
