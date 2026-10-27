@@ -39,8 +39,27 @@ define Build/Prepare
 	sed -e 's|@SDK_DIR@|$(SDK_DIR)/sdk|g' -e 's|@BUILD_DIR@|$(PKG_BUILD_DIR)|g' $(CURDIR)/src/Makefile.in > $(PKG_BUILD_DIR)/Makefile
 endef
 
+# 与 CI 探针完全一致的编译参数（ccflags-y 在本套 kbuild 下未生效，改用 KCFLAGS）
+PCIE_KCFLAGS := \
+	-I$(PKG_BUILD_DIR) \
+	-I$(SDK_DIR)/sdk/bcmdrivers/opensource/include/bcm963xx \
+	-I$(SDK_DIR)/sdk/bcmdrivers/opensource/include/bcm963xx/pmc \
+	-I$(SDK_DIR)/sdk/shared/opensource/include/bcm963xx \
+	-I$(SDK_DIR)/sdk/bcmdrivers/broadcom/include/bcm963xx \
+	-I$(SDK_DIR)/sdk/kernel/bcmkernel/include \
+	-I$(SDK_DIR)/sdk/kernel/bcmkernel/include/uapi \
+	-DCONFIG_BCM96855 -DCONFIG_BCM_CHIP_NUMBER=6855 \
+	-DCONFIG_BCM_PCIE_PMC_BRD_STUBS -DCONFIG_BCM_PCIE_HCD_IMPL=1 \
+	-DCONFIG_BCM_PCIE_VCD -DCONFIG_BCM_KF_PCI_RESET_DOMAIN_NR=2 \
+	-Wno-error=implicit-function-declaration -Wno-error=int-conversion \
+	-Wno-error=incompatible-pointer-types -Wno-error=return-mismatch \
+	-Wno-error=unused-function -Wno-error=unused-variable \
+	-Wno-error=unused-but-set-variable -Wno-error=missing-prototypes \
+	-Wno-error=old-style-declaration -Wno-error=discarded-qualifiers \
+	-Wno-error=address -Wno-error=override-init -Wno-error=uninitialized
+
 define Build/Compile
-	$(KERNEL_MAKE) M=$(PKG_BUILD_DIR) modules
+	+$(KERNEL_MAKE) M=$(PKG_BUILD_DIR) KCFLAGS="$(PCIE_KCFLAGS)" modules
 endef
 
 $(eval $(call KernelPackage,bcm-pcie))

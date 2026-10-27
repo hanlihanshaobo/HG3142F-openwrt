@@ -175,10 +175,15 @@ jobs:
             echo "=== 日志尾部 ==="
             tail -80 build.log 2>/dev/null || true
             echo
+            echo "=== bcm-pcie 包构建上下文 ==="
+            grep -nE -A6 -B6 "bcm-pcie|pcie_hcd|pcie-bcm963xx" build.log 2>/dev/null | tail -80 || true
+            echo
             echo "=== 配置步骤日志尾部 ==="
             tail -40 config.log 2>/dev/null || true
           } > ../../build_error.txt 2>/dev/null || true
           echo "build_error.txt 行数: $(wc -l < ../../build_error.txt 2>/dev/null || echo 0)"
+          echo "----- build_error.txt 前 120 行 -----"
+          head -120 ../../build_error.txt 2>/dev/null || true
 
       - name: SDK compile probe (bcm_enet)
         if: always()
