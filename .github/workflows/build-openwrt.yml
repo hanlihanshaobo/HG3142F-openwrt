@@ -216,9 +216,16 @@ jobs:
           sed -i 's/#if defined(CONFIG_NET_SWITCHDEV)/#if 0/' "$ENET/port.h" || true
           # autogen 的 rdpa_ag_iptv.h 未 include rdpa_mcast.h，导致 rdpa_fc_mcast_flow_t 未定义；探针阶段替换为 key_t
           sed -i 's/rdpa_fc_mcast_flow_t/rdpa_fc_mcast_flow_key_t/g' "$SDK/rdp/drivers/rdpa_gpl/include/autogen/rdpa_ag_iptv.h" || true
+          # enet.c 需要 Broadcom 扩展头（fwdcb_t/bcm_netdev_priv_info_*/SKB_NO_RECYCLE/PKT_DROP 等）
+          sed -i 's|#include <bcmnet.h>|#include <bcmnet.h>\n#include <linux/bcm_skbuff.h>\n#include <linux/blog.h>\n#include <linux/bcm_netdevice.h>|' "$ENET/enet.c" || true
+          # enet.c 里的 switchdev_ops 段（6.18 无该成员）
+          sed -i 's/#if defined(CONFIG_NET_SWITCHDEV)/#if 0/' "$ENET/enet.c" || true
+          # 6.18 的 sk_buff 无 recycle_flags（Broadcom patch 成员），探针阶段注释掉
+          sed -i 's|skb->recycle_flags &= SKB_NO_RECYCLE;|/* compat: no recycle_flags in 6.18 */|' "$ENET/enet.c" || true
+          sed -i 's|skb->recycle_flags |= rx_info->extra_skb_flags;|/* compat */|' "$ENET/enet.c" || true
           export STAGING_DIR="$TOP/sources/openwrt/staging_dir"
           make -C "$KDIR" M="$PROBE" ARCH=arm CROSS_COMPILE="$CROSS" \
-               KCFLAGS="$INC -include $COMPAT/nbuff_types_stub.h -include $COMPAT/nbuff_outer_stub.h -DCONFIG_BCM_ENET -DENET_DT -DRUNNER -DCONFIG_BCM_PON=1 -Wno-error=ignored-qualifiers -Wno-error=cpp -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=return-mismatch -Wno-error=unused-function" \
+               KCFLAGS="$INC -include $COMPAT/nbuff_types_stub.h -include $COMPAT/nbuff_outer_stub.h -DCONFIG_BCM_ENET -DENET_DT -DRUNNER -DCONFIG_BCM_PON=1 -Wno-error=ignored-qualifiers -Wno-error=cpp -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=return-mismatch -Wno-error=unused-function -Wno-error=discarded-qualifiers -Wno-error=missing-prototypes -Wno-error=old-style-declaration -Wno-error=unused-variable -Wno-error=override-init -Wno-error=address" \
                modules >probe_full.txt 2>&1
           RC=$?
           echo "probe rc=$RC"
