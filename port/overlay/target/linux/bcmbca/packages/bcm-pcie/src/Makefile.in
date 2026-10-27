@@ -16,8 +16,6 @@ ccflags-y += -DCONFIG_BCM_CHIP_NUMBER=6855
 ccflags-y += -DCONFIG_BCM_PCIE_PMC_BRD_STUBS
 ccflags-y += -DCONFIG_BCM_PCIE_HCD_IMPL=1
 ccflags-y += -DCONFIG_BCM_PCIE_VCD
-ccflags-y += -DCONFIG_BCM_PCI_MSI
-ccflags-y += -DCONFIG_PCI_MSI
 ccflags-y += -DCONFIG_BCM_KF_PCI_RESET_DOMAIN_NR=2
 
 # 4.1 时代的警告在 6.18 上默认是错误，先降级（真正的类型问题会照常报错）

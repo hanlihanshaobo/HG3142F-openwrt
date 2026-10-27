@@ -93,7 +93,7 @@
  *
  * 驱动为 Broadcom GPL 的 pcie-bcm963xx（asuswrt 5.04axhnd.675x / BCM96855 平台）
  */
-pcie@0: pcie@0 {
+pcie@0 {
 	compatible = "brcm,bcm963xx-pcie";
 	device_type = "pci";
 	reg = <0x80040000 0xa000>;
@@ -112,7 +112,7 @@ pcie@0: pcie@0 {
 	status = "okay";
 };
 
-pcie@1: pcie@1 {
+pcie@1 {
 	compatible = "brcm,bcm963xx-pcie";
 	device_type = "pci";
 	reg = <0x80050000 0xa000>;

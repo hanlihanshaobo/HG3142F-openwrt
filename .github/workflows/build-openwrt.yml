@@ -267,7 +267,7 @@ jobs:
           INC="-I$COMPAT -I$PCIE -I$SDK/bcmdrivers/opensource/include/bcm963xx -I$SDK/bcmdrivers/opensource/include/bcm963xx/pmc -I$SDK/shared/opensource/include/bcm963xx -I$SDK/bcmdrivers/broadcom/include/bcm963xx -I$SDK/kernel/bcmkernel/include -I$SDK/kernel/bcmkernel/include/uapi"
           export STAGING_DIR="$TOP/sources/openwrt/staging_dir"
           make -C "$KDIR" M="$PROBE2" ARCH=arm CROSS_COMPILE="$CROSS" \
-               KCFLAGS="$INC -DCONFIG_BCM96855 -DCONFIG_BCM_CHIP_NUMBER=6855 -DCONFIG_BCM_PCIE_PMC_BRD_STUBS -DCONFIG_BCM_PCIE_HCD_IMPL=1 -DCONFIG_BCM_PCIE_VCD -DCONFIG_BCM_PCI_MSI -DCONFIG_PCI_MSI -DCONFIG_BCM_KF_PCI_RESET_DOMAIN_NR=2 -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-pointer-types -Wno-error=return-mismatch -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=missing-prototypes -Wno-error=old-style-declaration -Wno-error=discarded-qualifiers -Wno-error=address -Wno-error=override-init" \
+               KCFLAGS="$INC -DCONFIG_BCM96855 -DCONFIG_BCM_CHIP_NUMBER=6855 -DCONFIG_BCM_PCIE_PMC_BRD_STUBS -DCONFIG_BCM_PCIE_HCD_IMPL=1 -DCONFIG_BCM_PCIE_VCD -DCONFIG_BCM_KF_PCI_RESET_DOMAIN_NR=2 -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-pointer-types -Wno-error=return-mismatch -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=missing-prototypes -Wno-error=old-style-declaration -Wno-error=discarded-qualifiers -Wno-error=address -Wno-error=override-init" \
                modules >probe_pcie.txt 2>&1
           RC=$?
           echo "probe rc=$RC"
