@@ -209,8 +209,9 @@ jobs:
           CROSS=$(basename "$GCC" | sed 's/gcc$//')
           echo "CROSS=$CROSS"
           INC="-I$COMPAT -I$ENET -I$SDK/bcmdrivers/opensource/net/enet/shared -I$SDK/bcmdrivers/opensource/include/bcm963xx -I$SDK/bcmdrivers/broadcom/include/bcm963xx -I$SDK/shared/opensource/include/bcm963xx -I$SDK/rdp/drivers/rdpa_gpl/include -I$SDK/kernel/bcmkernel/include -I$SDK/bcmdrivers/opensource/phy"
+          export STAGING_DIR="$TOP/sources/openwrt/staging_dir"
           make -C "$KDIR" M="$PROBE" ARCH=arm CROSS_COMPILE="$CROSS" \
-               EXTRA_CFLAGS="$INC -DCONFIG_BCM_ENET -DENET_DT -DRUNNER -DCONFIG_BCM_PON=1" \
+               KCFLAGS="$INC -DCONFIG_BCM_ENET -DENET_DT -DRUNNER -DCONFIG_BCM_PON=1" \
                modules >probe_full.txt 2>&1
           RC=$?
           echo "probe rc=$RC"
