@@ -29,7 +29,9 @@ define Device/fiberhome_mb4784w
   DEVICE_MODEL := HG3142F
   DEVICE_DTS := bcm96855-mb4784w
   SUPPORTED_DEVICES := fiberhome,mb4784w
-  DEVICE_PACKAGES := kmod-mtd-rw kmod-nand-brcmnand ubi-utils mtd-utils
+  # kmod-r8169: 板上 PCIe RTL8125(10ec:8125) 2.5G 网口，主线驱动可直接用
+  # watchdog : 喂 /dev/watchdog（brcm,bcm6345-wdt），否则 U-Boot 开的 80s 看门狗会把板子复位
+  DEVICE_PACKAGES := kmod-mtd-rw kmod-nand-brcmnand kmod-r8169 watchdog ubi-utils mtd-utils
   IMAGE_SIZE := 60000k
 endef
 TARGET_DEVICES += fiberhome_mb4784w
