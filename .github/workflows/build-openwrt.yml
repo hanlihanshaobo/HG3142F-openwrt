@@ -186,7 +186,8 @@ jobs:
         run: |
           set +e
           echo "=== SDK compile probe: build bcm_enet against 6.18 kernel ==="
-          KDIR=$(find sources/openwrt/build_dir -maxdepth 4 -type d -name 'linux-6.18*' 2>/dev/null | head -1)
+          TOP="$(pwd)"
+          KDIR=$(find "$TOP/sources/openwrt/build_dir" -maxdepth 4 -type d -name 'linux-6.18*' 2>/dev/null | head -1)
           if [ -z "$KDIR" ]; then echo "kernel dir not found, skip probe"; exit 0; fi
           echo "KDIR=$KDIR"
           TOP="$(pwd)"
@@ -202,7 +203,7 @@ jobs:
           for f in enet port runner dt_parsing g9991 mux_index phy_drv_pon sw_common port_types; do
             ln -sf "$ENET/$f.c" "$PROBE/$f.c"
           done
-          GCC=$(find sources/openwrt/staging_dir -path '*toolchain-*/bin/*-gcc' 2>/dev/null | head -1)
+          GCC=$(find "$TOP/sources/openwrt/staging_dir" -path '*toolchain-*/bin/*-gcc' 2>/dev/null | head -1)
           if [ -z "$GCC" ]; then echo "cross gcc not found, skip"; exit 0; fi
           export PATH="$(dirname "$GCC"):$PATH"
           CROSS=$(basename "$GCC" | sed 's/gcc$//')
