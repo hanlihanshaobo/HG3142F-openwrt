@@ -185,7 +185,7 @@ jobs:
         run: |
           mkdir -p out
           find sources/openwrt/bin/targets -type f \( -name '*.bin' -o -name '*.ubi' -o -name '*.tar' \
-            -o -name '*.itb' -o -name 'profiles.json' -o -name 'sha256sums' \) \
+            -o -name '*.itb' -o -name 'profiles.json' \) \
             -exec cp -v {} out/ \; || true
           [ -f build_error.txt ] && cp build_error.txt out/ || true
           ( cd out && sha256sum * > SHA256SUMS 2>/dev/null || true )
@@ -211,6 +211,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
+          # OpenWrt 自带的小写 sha256sums 上传 GitHub 会 404，已被我们自建的 SHA256SUMS 取代，兜底删除
+          rm -f out/sha256sums
           TAG="${GITHUB_REF_NAME}"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG 已存在，仅覆盖上传资产"
