@@ -49,3 +49,53 @@ int ubus_decode_pcie_wnd_cfg(u32 base, u32 size, u32 core)
 	(void)core;
 	return 0;
 }
+
+/*
+ * 第二轮补充：modpost 报出的未定义符号
+ *   pmc_wlan_power_up/down  —— PMC WLAN 电源（闭源）
+ *   getMemorySize           —— BCM SDK 取内存大小
+ *   bcm_legacy_irq_map      —— BCM 传统中断映射表
+ *   of_pci_parse_bus_range  —— 内核函数但未 EXPORT_SYMBOL，模块不可用
+ */
+#include <linux/of.h>
+#include <linux/of_pci.h>
+#include <linux/pci.h>
+
+int pmc_wlan_power_up(int unit)
+{
+	(void)unit;
+	return 0;
+}
+
+int pmc_wlan_power_down(int unit)
+{
+	(void)unit;
+	return 0;
+}
+
+/* 512 MiB（实机 DDR 容量）；仅用于内部换算日志 */
+unsigned long getMemorySize(void)
+{
+	return 0x20000000UL;
+}
+
+/* 传统中断映射表：默认恒等映射，足够 PCIe INTx 使用 */
+unsigned int bcm_legacy_irq_map[256] = {
+	0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+};
+
+/* 与内核同名同签名，但内核未导出；模块内自带一份实现 */
+int of_pci_parse_bus_range(struct device_node *node, struct resource *res)
+{
+	const __be32 *range;
+	int len;
+
+	range = of_get_property(node, "bus-range", &len);
+	if (!range || len < 2 * sizeof(*range))
+		return -EINVAL;
+
+	res->name = node->name;
+	res->start = of_read_number(range, 1);
+	res->end = of_read_number(range + 1, 1);
+	return 0;
+}

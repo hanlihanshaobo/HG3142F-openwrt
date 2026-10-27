@@ -50,7 +50,7 @@ PCIE_KCFLAGS := \
 	-I$(SDK_DIR)/sdk/kernel/bcmkernel/include/uapi \
 	-DCONFIG_BCM96855 -DCONFIG_BCM_CHIP_NUMBER=6855 \
 	-DCONFIG_BCM_PCIE_PMC_BRD_STUBS -DCONFIG_BCM_PCIE_HCD_IMPL=1 \
-	-DCONFIG_BCM_PCIE_VCD -DCONFIG_BCM_KF_PCI_RESET_DOMAIN_NR=2 \
+	-DCONFIG_BCM_PCIE_VCD \
 	-Wno-error=implicit-function-declaration -Wno-error=int-conversion \
 	-Wno-error=incompatible-pointer-types -Wno-error=return-mismatch \
 	-Wno-error=unused-function -Wno-error=unused-variable \
