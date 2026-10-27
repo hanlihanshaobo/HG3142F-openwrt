@@ -2738,9 +2738,9 @@ static void __exit pcie_hcd_exit(void)
 
 
 #if defined(MODULE)
-#if defined(CONFIG_BCM_KF_PCI_RESET_DOMAIN_NR)
+#if 0 /* compat(6.18): 内核没有 Broadcom 的 pci_reset_domain_nr 补丁，该调用无意义 */
 	pci_reset_domain_nr();
-#endif /* CONFIG_BCM_KF_PCI_RESET_DOMAIN_NR */
+#endif
 	pcie_hcd_plt_deinit();
 #endif /* MODULE */
 
