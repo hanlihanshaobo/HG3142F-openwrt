@@ -25,7 +25,6 @@ endef
 define KernelPackage/bcm-pcie
   SUBMENU:=Network Drivers
   TITLE:=Broadcom BCM963xx PCIe host controller
-  DEPENDS:=+kmod-pci
   FILES:=$(PKG_BUILD_DIR)/bcm_pcie.ko
   AUTOLOAD:=*
 endef
@@ -37,7 +36,7 @@ define Build/Prepare
 	$(INSTALL_DIR) $(PKG_BUILD_DIR)
 	$(CP) $(PCIE_DIR)/*.c $(PCIE_DIR)/*.h $(PKG_BUILD_DIR)/
 	$(CP) $(SDK_DIR)/compat/pcie_stubs.c $(PKG_BUILD_DIR)/
-	sed -e 's|@SDK_DIR@|$(SDK_DIR)/sdk|g' $(CURDIR)/src/Makefile.in > $(PKG_BUILD_DIR)/Makefile
+	sed -e 's|@SDK_DIR@|$(SDK_DIR)/sdk|g' -e 's|@BUILD_DIR@|$(PKG_BUILD_DIR)|g' $(CURDIR)/src/Makefile.in > $(PKG_BUILD_DIR)/Makefile
 endef
 
 define Build/Compile

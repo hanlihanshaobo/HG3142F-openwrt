@@ -35,8 +35,19 @@ struct msi_controller {
 	void (*teardown_irq)(struct msi_controller *chip, unsigned int irq);
 };
 
+/* msi_msg 在新内核里定义在 <linux/msi.h>；这里自带一份最小定义，
+ * 避免引入 msi.h 与模块符号依赖（MSI 运行时并不启用）。 */
+struct msi_msg {
+	u32 address_lo;
+	u32 address_hi;
+	u32 data;
+};
+
+/* 三个旧的 MSI 辅助函数在新内核里已不在 pci.h 中；给空实现，
+ * 使模块不依赖任何 MSI 导出符号。 */
 static inline void pci_msi_mask_irq(struct irq_data *data) { }
 static inline void pci_msi_unmask_irq(struct irq_data *data) { }
+static inline void pci_write_msi_msg(unsigned int irq, struct msi_msg *msg) { }
 
 #endif /* >= 5.13 */
 

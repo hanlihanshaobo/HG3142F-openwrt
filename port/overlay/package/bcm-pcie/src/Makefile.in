@@ -3,6 +3,7 @@
 #
 # 注意用 ccflags-y（按模块生效），不要用 EXTRA_CFLAGS（会污染全树）。
 
+ccflags-y += -I@BUILD_DIR@
 ccflags-y += -I@SDK_DIR@/bcmdrivers/opensource/include/bcm963xx
 ccflags-y += -I@SDK_DIR@/bcmdrivers/opensource/include/bcm963xx/pmc
 ccflags-y += -I@SDK_DIR@/shared/opensource/include/bcm963xx
