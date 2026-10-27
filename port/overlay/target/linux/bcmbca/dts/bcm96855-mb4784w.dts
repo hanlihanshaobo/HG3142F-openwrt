@@ -84,8 +84,6 @@
 			read-only;
 		};
 	};
-};
-
 /*
  * PCIe 主机控制器（2 个）
  *
@@ -131,4 +129,5 @@ pcie@1: pcie@1 {
 	brcm,coreid = <1>;
 	linux,pci-domain = <2>;
 	status = "okay";
+};
 };
