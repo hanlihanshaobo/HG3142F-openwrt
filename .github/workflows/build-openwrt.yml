@@ -237,6 +237,47 @@ jobs:
           echo "=== error count ==="
           grep -cE "error:|fatal error:" probe_full.txt || true
 
+      - name: SDK compile probe (bcm_pcie)
+        if: always()
+        continue-on-error: true
+        run: |
+          set +e
+          echo "=== SDK compile probe: build BCM963xx PCIe host driver against 6.18 ==="
+          TOP="$(pwd)"
+          KDIR=$(find "$TOP/sources/openwrt/build_dir" -maxdepth 4 -type d -name 'linux-6.18*' 2>/dev/null | head -1)
+          if [ -z "$KDIR" ]; then echo "kernel dir not found, skip probe"; exit 0; fi
+          SDK="$TOP/port/sdk-bcm96855/sdk"
+          COMPAT="$TOP/port/sdk-bcm96855/compat"
+          PCIE="$SDK/bcmdrivers/opensource/bus/pci/host/impl1"
+          PROBE2="$TOP/probe_pcie"
+          rm -rf "$PROBE2"; mkdir -p "$PROBE2"
+          printf '%s\n' \
+            'obj-m := bcm_pcie.o' \
+            'bcm_pcie-y := pcie-bcm963xx.o pcie_hcd.o pcie-vcore.o pcie_stubs.o' \
+            > "$PROBE2/Kbuild"
+          for f in pcie-bcm963xx pcie_hcd pcie-vcore; do
+            ln -sf "$PCIE/$f.c" "$PROBE2/$f.c"
+          done
+          ln -sf "$COMPAT/pcie_stubs.c" "$PROBE2/pcie_stubs.c"
+          GCC=$(find "$TOP/sources/openwrt/staging_dir" -path '*toolchain-*/bin/*-gcc' 2>/dev/null | head -1)
+          if [ -z "$GCC" ]; then echo "cross gcc not found, skip"; exit 0; fi
+          export PATH="$(dirname "$GCC"):$PATH"
+          CROSS=$(basename "$GCC" | sed 's/gcc$//')
+          echo "CROSS=$CROSS"
+          INC="-I$COMPAT -I$PCIE -I$SDK/bcmdrivers/opensource/include/bcm963xx -I$SDK/bcmdrivers/opensource/include/bcm963xx/pmc -I$SDK/shared/opensource/include/bcm963xx -I$SDK/bcmdrivers/broadcom/include/bcm963xx -I$SDK/kernel/bcmkernel/include -I$SDK/kernel/bcmkernel/include/uapi"
+          export STAGING_DIR="$TOP/sources/openwrt/staging_dir"
+          make -C "$KDIR" M="$PROBE2" ARCH=arm CROSS_COMPILE="$CROSS" \
+               KCFLAGS="$INC -DCONFIG_BCM96855 -DCONFIG_BCM_CHIP_NUMBER=6855 -DCONFIG_BCM_PCIE_PMC_BRD_STUBS -DCONFIG_BCM_PCIE_HCD_IMPL=1 -DCONFIG_BCM_PCIE_VCD -DCONFIG_BCM_PCI_MSI -DCONFIG_PCI_MSI -DCONFIG_BCM_KF_PCI_RESET_DOMAIN_NR=2 -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-pointer-types -Wno-error=return-mismatch -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=missing-prototypes -Wno-error=old-style-declaration -Wno-error=discarded-qualifiers -Wno-error=address -Wno-error=override-init" \
+               modules >probe_pcie.txt 2>&1
+          RC=$?
+          echo "probe rc=$RC"
+          echo "=== first 100 lines of pcie probe output ==="
+          head -100 probe_pcie.txt || true
+          echo "=== error lines (error:) ==="
+          grep -nE "error:|fatal error:" probe_pcie.txt | head -60 || true
+          echo "=== error count ==="
+          grep -cE "error:|fatal error:" probe_pcie.txt || true
+
       - name: Collect artifacts
         if: always()
         run: |
