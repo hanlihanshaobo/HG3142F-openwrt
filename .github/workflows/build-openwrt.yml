@@ -180,6 +180,46 @@ jobs:
           } > ../../build_error.txt 2>/dev/null || true
           echo "build_error.txt 行数: $(wc -l < ../../build_error.txt 2>/dev/null || echo 0)"
 
+      - name: SDK compile probe (bcm_enet)
+        if: always()
+        continue-on-error: true
+        run: |
+          set +e
+          echo "=== SDK compile probe: build bcm_enet against 6.18 kernel ==="
+          KDIR=$(find build_dir -maxdepth 4 -type d -name 'linux-6.18*' 2>/dev/null | head -1)
+          if [ -z "$KDIR" ]; then echo "kernel dir not found, skip probe"; exit 0; fi
+          echo "KDIR=$KDIR"
+          TOP="$(pwd)"
+          SDK="$TOP/port/sdk-bcm96855/sdk"
+          COMPAT="$TOP/port/sdk-bcm96855/compat"
+          ENET="$SDK/bcmdrivers/opensource/net/enet/impl7"
+          PROBE="$TOP/probe"
+          rm -rf "$PROBE"; mkdir -p "$PROBE"
+          printf '%s\n' \
+            'obj-m := bcm_enet.o' \
+            'bcm_enet-y := enet.o port.o runner.o dt_parsing.o g9991.o mux_index.o phy_drv_pon.o sw_common.o port_types.o' \
+            > "$PROBE/Kbuild"
+          for f in enet port runner dt_parsing g9991 mux_index phy_drv_pon sw_common port_types; do
+            ln -sf "$ENET/$f.c" "$PROBE/$f.c"
+          done
+          GCC=$(find staging_dir -path '*toolchain-*/bin/*-gcc' 2>/dev/null | head -1)
+          if [ -z "$GCC" ]; then echo "cross gcc not found, skip"; exit 0; fi
+          export PATH="$(dirname "$GCC"):$PATH"
+          CROSS=$(basename "$GCC" | sed 's/gcc$//')
+          echo "CROSS=$CROSS"
+          INC="-I$COMPAT -I$ENET -I$SDK/bcmdrivers/opensource/net/enet/shared -I$SDK/bcmdrivers/opensource/include/bcm963xx -I$SDK/bcmdrivers/broadcom/include/bcm963xx -I$SDK/shared/opensource/include/bcm963xx -I$SDK/rdp/drivers/rdpa_gpl/include -I$SDK/kernel/bcmkernel/include -I$SDK/bcmdrivers/opensource/phy"
+          make -C "$KDIR" M="$PROBE" ARCH=arm CROSS_COMPILE="$CROSS" \
+               EXTRA_CFLAGS="$INC -DCONFIG_BCM_ENET -DENET_DT -DRUNNER -DCONFIG_BCM_PON=1" \
+               modules >probe_full.txt 2>&1
+          RC=$?
+          echo "probe rc=$RC"
+          echo "=== first 120 lines of probe output ==="
+          head -120 probe_full.txt || true
+          echo "=== error lines (error:) ==="
+          grep -nE "error:|fatal error:" probe_full.txt | head -60 || true
+          echo "=== error count ==="
+          grep -cE "error:|fatal error:" probe_full.txt || true
+
       - name: Collect artifacts
         if: always()
         run: |

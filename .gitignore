@@ -11,3 +11,4 @@ artifacts/
 .vscode/
 *.swp
 .DS_Store
+.workbuddy/
