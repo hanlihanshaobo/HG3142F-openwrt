@@ -1072,7 +1072,10 @@ int bcm963xx_hc_gen2_phy_enable_ssc(struct pcie_hc_core *phc,
 void bcm963xx_hc_phy_config_rescal(struct pcie_hc_core *phc)
 {
 	uint16 rddata, wrdata;
-	int val;
+	/* compat(6.18): SDK 的 GetRCalSetting_1UM_VERT stub 返回 0 却不写 *rcal，
+	 * 6.18 的 -Werror=uninitialized 会报错；该值仅用于日志（PHY 写入只在 Gen3 生效），
+	 * 这里初始化为 0 即可，无功能影响。 */
+	int val = 0;
 
 	HCD_FN_ENT();
 
