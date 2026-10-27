@@ -30,7 +30,7 @@ define KernelPackage/bcm-pcie
   AUTOLOAD:=*
 endef
 
-SDK_DIR:=$(CURDIR)/../../sdk-bcm96855
+SDK_DIR:=$(CURDIR)/../../target/linux/bcmbca/sdk-bcm96855
 PCIE_DIR:=$(SDK_DIR)/sdk/bcmdrivers/opensource/bus/pci/host/impl1
 
 define Build/Prepare
