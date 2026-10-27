@@ -1,0 +1,39 @@
+# 外置模块的 Kbuild 文件（模板）
+# @SDK_DIR@ 会在 Build/Prepare 阶段被替换成 SDK 源码树的绝对路径。
+#
+# 注意用 ccflags-y（按模块生效），不要用 EXTRA_CFLAGS（会污染全树）。
+
+ccflags-y += -I@SDK_DIR@/bcmdrivers/opensource/include/bcm963xx
+ccflags-y += -I@SDK_DIR@/bcmdrivers/opensource/include/bcm963xx/pmc
+ccflags-y += -I@SDK_DIR@/shared/opensource/include/bcm963xx
+ccflags-y += -I@SDK_DIR@/bcmdrivers/broadcom/include/bcm963xx
+ccflags-y += -I@SDK_DIR@/kernel/bcmkernel/include
+ccflags-y += -I@SDK_DIR@/kernel/bcmkernel/include/uapi
+
+# 芯片/特性选择（与原厂 asuswrt 675x 一致）
+ccflags-y += -DCONFIG_BCM96855
+ccflags-y += -DCONFIG_BCM_CHIP_NUMBER=6855
+ccflags-y += -DCONFIG_BCM_PCIE_PMC_BRD_STUBS
+ccflags-y += -DCONFIG_BCM_PCIE_HCD_IMPL=1
+ccflags-y += -DCONFIG_BCM_PCIE_VCD
+ccflags-y += -DCONFIG_BCM_PCI_MSI
+ccflags-y += -DCONFIG_PCI_MSI
+ccflags-y += -DCONFIG_BCM_KF_PCI_RESET_DOMAIN_NR=2
+
+# 4.1 时代的警告在 6.18 上默认是错误，先降级（真正的类型问题会照常报错）
+ccflags-y += -Wno-error=implicit-function-declaration
+ccflags-y += -Wno-error=int-conversion
+ccflags-y += -Wno-error=incompatible-pointer-types
+ccflags-y += -Wno-error=return-mismatch
+ccflags-y += -Wno-error=unused-function
+ccflags-y += -Wno-error=unused-variable
+ccflags-y += -Wno-error=unused-but-set-variable
+ccflags-y += -Wno-error=missing-prototypes
+ccflags-y += -Wno-error=old-style-declaration
+ccflags-y += -Wno-error=discarded-qualifiers
+ccflags-y += -Wno-error=address
+ccflags-y += -Wno-error=override-init
+ccflags-y += -Wno-error=uninitialized
+
+obj-m := bcm_pcie.o
+bcm_pcie-y := pcie-bcm963xx.o pcie_hcd.o pcie-vcore.o pcie_stubs.o

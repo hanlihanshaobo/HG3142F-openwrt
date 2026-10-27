@@ -43,6 +43,16 @@ if [ -d "$REPO_ROOT/port/patches" ]; then
 	done
 fi
 
+# BCM96855 SDK 源码树（enet / PCIe 等 GPL 驱动）：拷进 OpenWrt 源码树，
+# 供 target/linux/bcmbca/packages/bcm-pcie 这类 target 包以相对路径引用。
+if [ -d "$REPO_ROOT/port/sdk-bcm96855" ]; then
+	echo "==> 复制 SDK 源码树 -> target/linux/bcmbca/sdk-bcm96855"
+	rm -rf "$DEST/target/linux/bcmbca/sdk-bcm96855"
+	mkdir -p "$DEST/target/linux/bcmbca/sdk-bcm96855"
+	( cd "$REPO_ROOT/port/sdk-bcm96855" && tar cf - sdk compat ) \
+		| ( cd "$DEST/target/linux/bcmbca/sdk-bcm96855" && tar xf - )
+fi
+
 echo "==> 完成"
 git -C "$DEST" show -s --format='    %H %cI %s'
 if ls "$DEST/target/linux" | grep -qx bcmbca; then
