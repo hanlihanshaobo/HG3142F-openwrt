@@ -208,10 +208,13 @@ jobs:
           export PATH="$(dirname "$GCC"):$PATH"
           CROSS=$(basename "$GCC" | sed 's/gcc$//')
           echo "CROSS=$CROSS"
-          INC="-I$COMPAT -I$ENET -I$SDK/bcmdrivers/opensource/net/enet/shared -I$SDK/bcmdrivers/opensource/include/bcm963xx -I$SDK/bcmdrivers/broadcom/include/bcm963xx -I$SDK/shared/opensource/include/bcm963xx -I$SDK/rdp/drivers/rdpa_gpl/include -I$SDK/kernel/bcmkernel/include -I$SDK/bcmdrivers/opensource/phy"
+          BDMF="$SDK/bcmdrivers/opensource/char/bdmf/impl1"
+          INC="-I$COMPAT -I$ENET -I$SDK/bcmdrivers/opensource/net/enet/shared -I$SDK/bcmdrivers/opensource/include/bcm963xx -I$SDK/bcmdrivers/broadcom/include/bcm963xx -I$SDK/shared/opensource/include/bcm963xx -I$SDK/rdp/drivers/rdpa_gpl/include -I$SDK/kernel/bcmkernel/include -I$SDK/bcmdrivers/opensource/phy -I$BDMF/framework -I$BDMF/system -I$BDMF/system/linux -I$BDMF/system/linux/cm"
+          # 6.18 的 sk_buff 已无 queue 成员（4.1 由 Broadcom patch 加）；探针阶段临时去掉对应 accessor
+          sed -i '/__BUILD_NBUFF_\(SET\|GET\)_ACCESSOR(.*queue/d' "$SDK/kernel/bcmkernel/include/linux/nbuff.h" || true
           export STAGING_DIR="$TOP/sources/openwrt/staging_dir"
           make -C "$KDIR" M="$PROBE" ARCH=arm CROSS_COMPILE="$CROSS" \
-               KCFLAGS="$INC -include $COMPAT/nbuff_outer_stub.h -DCONFIG_BCM_ENET -DENET_DT -DRUNNER -DCONFIG_BCM_PON=1 -Wno-error=ignored-qualifiers -Wno-error=cpp -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=return-mismatch -Wno-error=unused-function" \
+               KCFLAGS="$INC -include $COMPAT/nbuff_types_stub.h -include $COMPAT/nbuff_outer_stub.h -DCONFIG_BCM_ENET -DENET_DT -DRUNNER -DCONFIG_BCM_PON=1 -Wno-error=ignored-qualifiers -Wno-error=cpp -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=return-mismatch -Wno-error=unused-function" \
                modules >probe_full.txt 2>&1
           RC=$?
           echo "probe rc=$RC"
