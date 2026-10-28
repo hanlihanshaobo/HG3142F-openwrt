@@ -222,8 +222,8 @@ jobs:
           # autogen 的 rdpa_ag_iptv.h 未 include rdpa_mcast.h，导致 rdpa_fc_mcast_flow_t 未定义；探针阶段替换为 key_t
           sed -i 's/rdpa_fc_mcast_flow_t/rdpa_fc_mcast_flow_key_t/g' "$SDK/rdp/drivers/rdpa_gpl/include/autogen/rdpa_ag_iptv.h" || true
           # 不能 include bcm_skbuff.h/bcm_netdevice.h（会整体替换 sk_buff/net_device，与 6.18 冲突）
-          # 改为：给 6.18 内核头注入 Broadcom 扩展字段（struct 末尾加成员），扩展类型由 compat/bcm_ext_types.h 提供
-          python3 "$TOP/port/sdk-bcm96855/kernel-patch/patch_kernel.py" "$KDIR/include" || true
+          # 注意：不再改内核头。厂商私有类型统一由 compat/enet_compat.h 打桩。
+          # 不再给内核头注入 Broadcom 字段（会破坏 struct 布局）；改用 compat 桩
           # enet.c 里的 switchdev_ops 段（6.18 无该成员）
           sed -i 's/#if defined(CONFIG_NET_SWITCHDEV)/#if 0/' "$ENET/enet.c" || true
           # 6.18 的 sk_buff 无 recycle_flags（Broadcom patch 成员），探针阶段注释掉
@@ -231,7 +231,7 @@ jobs:
           sed -i 's|skb->recycle_flags |= rx_info->extra_skb_flags;|/* compat */|' "$ENET/enet.c" || true
           export STAGING_DIR="$TOP/sources/openwrt/staging_dir"
           make -C "$KDIR" M="$PROBE" ARCH=arm CROSS_COMPILE="$CROSS" \
-               KCFLAGS="$INC -include $COMPAT/bcm_ext_types.h -include $COMPAT/nbuff_types_stub.h -include $COMPAT/nbuff_outer_stub.h -DCONFIG_BCM_ENET -DENET_DT -DRUNNER -DCONFIG_BCM_PON=1 -Wno-error=ignored-qualifiers -Wno-error=cpp -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=return-mismatch -Wno-error=unused-function -Wno-error=discarded-qualifiers -Wno-error=missing-prototypes -Wno-error=old-style-declaration -Wno-error=unused-variable -Wno-error=override-init -Wno-error=address" \
+               KCFLAGS="$INC -include $COMPAT/enet_compat.h -include $COMPAT/nbuff_types_stub.h -include $COMPAT/nbuff_outer_stub.h -DCONFIG_BCM_ENET -DENET_DT -DRUNNER -DCONFIG_BCM_PON=1 -Wno-error=ignored-qualifiers -Wno-error=cpp -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=return-mismatch -Wno-error=unused-function -Wno-error=discarded-qualifiers -Wno-error=missing-prototypes -Wno-error=old-style-declaration -Wno-error=unused-variable -Wno-error=override-init -Wno-error=address" \
                modules >probe_full.txt 2>&1
           RC=$?
           echo "probe rc=$RC"
