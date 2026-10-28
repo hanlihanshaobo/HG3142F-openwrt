@@ -1,0 +1,26 @@
+# FiberHome HG3142F (BCM96855) 网络配置
+#
+# 当前阶段：只有 PCIe 上的 RTL8125(10ec:8125) 2.5G 网口可用，作为 LAN。
+# BCM 交换芯片的 4 个千兆 LAN 口还没有驱动（需移植 bcm_enet），
+# 等驱动就绪后把 lan1..lan4 加进 br-lan 的 ports 即可。
+#
+# 2.5G 口自协商：对端是千兆网卡时跑 1Gbps，对端支持 2.5G 时跑 2500Mbps。
+
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	list ipaddr '127.0.0.1/8'
+
+config globals 'globals'
+	option ula_prefix 'fd3a:8f21:5c07::/48'
+
+config device
+	option name 'br-lan'
+	option type 'bridge'
+	list ports 'eth0'
+
+config interface 'lan'
+	option device 'br-lan'
+	option proto 'static'
+	list ipaddr '192.168.1.1/24'
+	option ip6assign '60'
