@@ -561,7 +561,10 @@ static inline struct pcie_hcd_msi *to_pcie_hcd_msi(struct msi_controller *chip)
 }
 
 #if defined(USE_PMC_BRD_STUBS)
-static inline void pcie_hcd_pmc_power_up(int unit, int is_dual_lane) { }
+static inline void pcie_hcd_pmc_power_up(int unit, int is_dual_lane) {
+	/* compat: 真实调用 PMC 上电（pcie_stubs.c 内的最小 PMB 实现） */
+	pmc_pcie_power_up(unit, is_dual_lane);
+}
 static inline void pcie_hcd_pmc_power_down(int unit, int is_dual_lane) { }
 static inline int pcie_hcd_get_port_mode(int port) {
 	/* Alwyas RC mode */
