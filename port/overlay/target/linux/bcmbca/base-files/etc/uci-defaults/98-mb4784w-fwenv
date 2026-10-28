@@ -1,0 +1,18 @@
+#!/bin/sh
+# U-Boot 环境变量的位置（来自 loader 里的 env_boot_magic = 16384@0x40000,0xb1000）
+#   mtd0 = loader（2MB，SPL+TPL+U-Boot）
+#   主副本   @0x40000，长度 0x4000
+#   备份副本 @0xb1000，长度 0x4000
+#
+# 注意：loader 分区在 DT 里是 read-only，写入前要先：
+#   insmod mtd-rw i_want_a_brick=1
+# 然后 fw_setenv / fw_printenv 才可用。
+#
+# uboot-envtools 自带一份示例 fw_env.config，这里在首次启动时覆盖它。
+
+cat > /etc/fw_env.config <<'CONF'
+/dev/mtd0 0x40000 0x4000
+/dev/mtd0 0xb1000 0x4000
+CONF
+
+exit 0
