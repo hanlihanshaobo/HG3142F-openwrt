@@ -14,6 +14,12 @@ config interface 'loopback'
 config globals 'globals'
 	option ula_prefix 'fd3a:8f21:5c07::/48'
 
+# RTL8125 内部没有烧录 MAC（r8169 每次启动都会 "can't read MAC address" 并随机生成），
+# 这里固定成设备标签 MAC，避免 DHCP 租约每次变化。
+config device
+	option name 'eth0'
+	option macaddr '68:e9:05:b4:fd:b8'
+
 config device
 	option name 'br-lan'
 	option type 'bridge'

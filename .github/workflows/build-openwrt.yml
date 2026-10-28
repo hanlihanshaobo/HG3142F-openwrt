@@ -317,6 +317,18 @@ jobs:
             fi
           fi
 
+          # 4) 空的 UBIFS overlay 镜像（设备端没有 mkfs.ubifs，只能在这里预生成）
+          #    几何参数由实机 UBI 决定：LEB=126976, min-io=2048(NAND 页 2048)
+          #    OVERLAY_LEBS 必须与设备端 `ubimkvol -s <LEBS*126976>` 的 LEB 数一致
+          sudo apt-get install -y mtd-utils >/dev/null 2>&1 || true
+          if command -v mkfs.ubifs >/dev/null; then
+            rm -rf /tmp/ovl_empty && mkdir -p /tmp/ovl_empty
+            mkfs.ubifs -q -r /tmp/ovl_empty -m 2048 -e 126976 -c 128 -x zlib -o out/overlay.ubifs \
+              && echo "overlay.ubifs: $(stat -c%s out/overlay.ubifs) 字节 (c=128, leb=126976)"
+          else
+            echo "!! mkfs.ubifs 不可用"
+          fi
+
       - name: Collect artifacts
         if: always()
         run: |
