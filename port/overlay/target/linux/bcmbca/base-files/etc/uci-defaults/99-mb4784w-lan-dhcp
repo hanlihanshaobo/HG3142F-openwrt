@@ -1,0 +1,15 @@
+#!/bin/sh
+# HG3142F: 出厂镜像里 dhcp.lan.dhcpv4 默认是 disabled，导致 LAN 上的主机拿不到 IP。
+# 这里在首次启动时把它打开（用 uci-defaults 而不是直接放 /etc/config/dhcp，
+# 后者会和 dnsmasq 包自带的同名 conffile 冲突：apk ERROR trying to overwrite）。
+
+[ -f /etc/config/dhcp ] || exit 0
+
+# 只处理 lan，且不覆盖用户后续的手工改动
+if [ "$(uci -q get dhcp.lan.dhcpv4)" != "server" ]; then
+	uci set dhcp.lan.dhcpv4='server'
+	uci -q delete dhcp.lan.ignore
+	uci commit dhcp
+fi
+
+exit 0
