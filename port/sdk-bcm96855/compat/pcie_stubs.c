@@ -123,10 +123,20 @@ int of_pci_parse_bus_range(struct device_node *node, struct resource *res)
 #include <linux/slab.h>
 
 #define PMC_PHYS_BASE		0xffb20060UL
-#define PMC_PMB_CFG_OFF		0x100	/* PmbBus.config */
-#define PMC_KEYHOLE_CTRL_OFF	0x110	/* keyhole[0].control */
-#define PMC_KEYHOLE_WR_OFF	0x114
-#define PMC_KEYHOLE_RD_OFF	0x11c
+/*
+ * 偏移依据 6855/pmc.h 的 Pmc 结构（注释给出绝对偏移）：
+ *   struct Pmc {
+ *       SSBMaster ssbMasterCtrl;    // 0x20060-0x20077
+ *       uint32_t  unused12[34];     // 0x20078-0x200ff
+ *       PmbBus    pmb;              // 0x20100  -> 相对 0xffb20060 是 +0xA0
+ *   };
+ *   PmbBus: config@+0x00, keyhole[0]@+0x10 (control/wr_data/mutex/rd_data)
+ *   => keyhole[0].control = +0xB0, wr_data = +0xB4, rd_data = +0xBC
+ */
+#define PMC_PMB_CFG_OFF		0xA0	/* PmbBus.config   (0xffb20100) */
+#define PMC_KEYHOLE_CTRL_OFF	0xB0	/* keyhole[0].control (0xffb20110) */
+#define PMC_KEYHOLE_WR_OFF	0xB4
+#define PMC_KEYHOLE_RD_OFF	0xBC
 
 #define PMC_PMBM_START		(1u << 31)
 #define PMC_PMBM_TIMEOUT	(1u << 30)
@@ -173,6 +183,11 @@ static int bcm_pmb_access(u32 dev, u32 word_off, u32 *val, bool write)
 
 	bus = (dev >> 12) & 0x3;
 	num_regs = (readl(bcm_pmc_base + PMC_PMB_CFG_OFF) >> 20) & 0x3ff;
+	if (!num_regs) {
+		pr_err("bcm-pcie: PMB config=0x%08x (num_regs=0)\n",
+		       readl(bcm_pmc_base + PMC_PMB_CFG_OFF));
+		return -EINVAL;
+	}
 	addr = ((dev & 0xff) * num_regs) | word_off;
 
 	if (write) {
