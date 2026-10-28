@@ -56,6 +56,7 @@
 		interrupt-map = <0 0 0 0 0x1 0 43 4>;
 
 		brcm,coreid = <0>;
+		brcm,apon;	/* 无链路也保持 PCIe 核心供电 */
 		linux,pci-domain = <1>;
 		status = "okay";
 	};
@@ -75,6 +76,7 @@
 		interrupt-map = <0 0 0 0 0x1 0 44 4>;
 
 		brcm,coreid = <1>;
+		brcm,apon;	/* 无链路也保持 PCIe 核心供电 */
 		linux,pci-domain = <2>;
 		status = "okay";
 	};

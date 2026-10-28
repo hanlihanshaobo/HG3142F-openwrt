@@ -573,8 +573,8 @@ static inline int pcie_hcd_port_enabled(int port) {
 	    return 1;
 	}
 
-	/* Port not present */
-	return 0;
+	/* compat: 原桩返回 0（IKOS 仿真用），真实硬件上 PCIe 端口存在 */
+	return kerSysGetPciePortEnable(port);
 }
 static inline int pmc_hcd_get_chip_id(void) {
 	unsigned long chipid = 0;
