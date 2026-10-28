@@ -26,7 +26,8 @@
 	chosen {
 		stdout-path = "serial0:115200n8";
 		/* 原厂实测控制台就是 ttyAMA0（PL011），不是 ttyS0 */
-		bootargs = "console=ttyAMA0,115200 earlycon";
+		/* 前半段与厂商一致；root=/dev/ubiblock0_4 等由 U-Boot 按 img_index 追加 */
+		bootargs = "coherent_pool=2M cpuidle_sysfs_switch console=ttyAMA0,115200 earlycon rootwait pci=pcie_bus_safe";
 	};
 
 	/* 512 MiB（原厂 U-Boot 打印 "DRAM: 512 MiB"） */

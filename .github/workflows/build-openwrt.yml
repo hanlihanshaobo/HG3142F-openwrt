@@ -283,24 +283,38 @@ jobs:
           echo "=== error count ==="
           grep -cE "error:|fatal error:" probe_pcie.txt || true
 
-      - name: Export raw kernel Image (构造原厂兼容 FIT 用)
+      - name: Export kernel Image / rootfs squashfs (构造厂商兼容 FIT + 持久化安装用)
         if: always()
         run: |
           mkdir -p out
-          IMG=$(find sources/openwrt/build_dir -path '*/arch/arm/boot/Image' -type f 2>/dev/null | head -1)
+          # 1) 非 initramfs 的内核裸镜像（initramfs 版有 25MB，塞不进 bootfs1）
+          IMG=$(find sources/openwrt/build_dir -path '*/arch/arm/boot/Image' -type f -not -path '*initramfs*' 2>/dev/null | head -1)
+          [ -z "$IMG" ] && IMG=$(find sources/openwrt/build_dir -path '*/arch/arm/boot/Image' -type f 2>/dev/null | head -1)
           if [ -n "$IMG" ]; then
             cp -v "$IMG" out/Image
-            echo "Image: $(stat -c%s out/Image) 字节"
-            # 原厂 FIT 里的 kernel 是 lzo 压缩的裸 Image，这里一并产出
-            apt-get install -y lzop >/dev/null 2>&1 || true
+            echo "Image: $(stat -c%s out/Image) 字节  ($IMG)"
+          else
+            echo "!! 未找到 Image"; find sources/openwrt/build_dir -name 'Image' -path '*arch/arm/boot*' 2>/dev/null | head -5
+          fi
+
+          # 2) 根文件系统 squashfs（写入 UBI rootfs1 卷，由 ubiblock 挂载）
+          SQ=$(find sources/openwrt/build_dir -name 'root.squashfs' -type f 2>/dev/null | head -1)
+          if [ -n "$SQ" ]; then
+            cp -v "$SQ" out/root.squashfs
+            echo "root.squashfs: $(stat -c%s out/root.squashfs) 字节"
+          else
+            echo "!! 未找到 root.squashfs"; find sources/openwrt/build_dir -name '*.squashfs' 2>/dev/null | head -5
+          fi
+
+          # 3) lzo 压缩内核（厂商 FIT 的 kernel 节点是 lzo）
+          if [ -f out/Image ]; then
+            sudo apt-get update -qq >/dev/null 2>&1 || true
+            sudo apt-get install -y lzop >/dev/null 2>&1 || true
             if command -v lzop >/dev/null; then
               lzop -9 -f -o out/Image.lzo out/Image && echo "Image.lzo: $(stat -c%s out/Image.lzo) 字节"
             else
-              echo "lzop 不可用，跳过 lzo 压缩（可在本地处理）"
+              echo "!! lzop 安装失败"
             fi
-          else
-            echo "未找到 Image（内核可能未解压出裸镜像）"
-            find sources/openwrt/build_dir -name 'Image*' -path '*arch/arm/boot*' 2>/dev/null | head -5
           fi
 
       - name: Collect artifacts
