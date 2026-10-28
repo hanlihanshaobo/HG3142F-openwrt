@@ -283,6 +283,26 @@ jobs:
           echo "=== error count ==="
           grep -cE "error:|fatal error:" probe_pcie.txt || true
 
+      - name: Export raw kernel Image (构造原厂兼容 FIT 用)
+        if: always()
+        run: |
+          mkdir -p out
+          IMG=$(find sources/openwrt/build_dir -path '*/arch/arm/boot/Image' -type f 2>/dev/null | head -1)
+          if [ -n "$IMG" ]; then
+            cp -v "$IMG" out/Image
+            echo "Image: $(stat -c%s out/Image) 字节"
+            # 原厂 FIT 里的 kernel 是 lzo 压缩的裸 Image，这里一并产出
+            apt-get install -y lzop >/dev/null 2>&1 || true
+            if command -v lzop >/dev/null; then
+              lzop -9 -f -o out/Image.lzo out/Image && echo "Image.lzo: $(stat -c%s out/Image.lzo) 字节"
+            else
+              echo "lzop 不可用，跳过 lzo 压缩（可在本地处理）"
+            fi
+          else
+            echo "未找到 Image（内核可能未解压出裸镜像）"
+            find sources/openwrt/build_dir -name 'Image*' -path '*arch/arm/boot*' 2>/dev/null | head -5
+          fi
+
       - name: Collect artifacts
         if: always()
         run: |
