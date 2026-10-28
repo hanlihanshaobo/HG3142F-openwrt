@@ -46,20 +46,36 @@ typedef int (*fwdcb_t)(struct sk_buff *skb, struct net_device *dev);
 
 struct fkb;
 
-static inline void fkb_flush(struct fkb *fkb, void *data, unsigned int len,
-			     int flags)
-{
-	(void)fkb; (void)data; (void)len; (void)flags;
-}
+/* ---- nbuff.h 依赖的厂商类型（纯 SDK 侧，仅做类型占位） ---- */
+#ifndef _WLFLOWINF_T_DEFINED
+#define _WLFLOWINF_T_DEFINED
+/* nbuff.h 里作为 union 成员使用，实际内容在 WiFi 路径才用到 */
+typedef struct { uint32_t _opaque; } wlFlowInf_t;
+#endif
+
+#ifndef _RECYCLEFUNCP_DEFINED
+#define _RECYCLEFUNCP_DEFINED
+/* FKB 回收回调；驱动里只做函数指针强制转换，签名不影响编译 */
+typedef void (*RecycleFuncP)(void *ctx, void *buf, int len);
+#endif
+
+/* 注意：fkb_flush 不要在这里定义 —— nbuff.h 自己声明了
+ *   extern void fkb_flush(FkBuff_t *, uint8_t *, int, int);
+ * 我们早先的定义签名不同，会报 conflicting types。此处交给 SDK 头声明，
+ * 真正的实现放到 enet_stubs.c（链接期补齐）。 */
 
 /* ---- netdev 私有信息（RDPA 侧） ---- */
 typedef enum {
 	BCM_NETDEV_PRIV_INFO_NONE = 0,
+	BCM_NETDEV_TO_RDPA_IF,		/* enet_priv_info_get 的 case 需要 */
 } bcm_netdev_priv_info_type_t;
 
 typedef struct {
 	void *rdpa_if;
 	int   index;
+	/* enet.c 在 #ifdef RUNNER 下访问 .bcm_netdev_to_rdpa_if.rdpa_if，
+	 * 我们不开 RUNNER，但结构体成员要存在才能过编译 */
+	struct { int rdpa_if; } bcm_netdev_to_rdpa_if;
 } bcm_netdev_priv_info_out_t;
 
 #endif /* _BCM_ENET_COMPAT_H_ */

@@ -537,8 +537,8 @@ static inline int rx_skb(FkBuff_t *fkb, enetx_port_t *port, enetx_rx_info_t *rx_
 
     skb_trim(skb,fkb->len);
 
-    skb->recycle_flags &= SKB_NO_RECYCLE; /* no skb recycle,just do data recyle */
-    skb->recycle_flags |= rx_info->extra_skb_flags;
+    /* compat(6.18): recycle_flags 是厂商给 sk_buff 打的补丁字段，主线没有。
+     * 这两行只影响“skb 回收优化”，与数据收发无关，直接跳过。 */
 
     skb->priority = fkb->priority;
     skb->dev = dev;
@@ -2039,7 +2039,8 @@ static int enet_dev_mac_set(enetx_port_t *p, int set)
         memmove(sockaddr.sa_data, macaddr, ETH_ALEN);
         sockaddr.sa_family = p->dev->type;
 
-        dev_set_mac_address(p->dev, &sockaddr);
+        /* compat(6.18): 签名多了一个 struct netlink_ext_ack * */
+        dev_set_mac_address(p->dev, &sockaddr, NULL);
 
 #ifdef SF2_DEVICE
         extsw_set_mac_address(p);
