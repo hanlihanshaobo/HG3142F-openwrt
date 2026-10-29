@@ -33,8 +33,14 @@
 #include <linux/jiffies.h>
 #include <linux/string.h>
 #include <linux/errno.h>
+#include <linux/mii.h>
+#include <linux/of.h>
+#include <linux/of_address.h>
+#include <linux/of_platform.h>
+#include <linux/stdarg.h>
 
 #include "phy_drv.h"
+#include "phy_drv_compat.h"
 
 /* 链路轮询间隔：厂商值未知，先用 200ms —— 够快，又不至于每秒几十次唤醒 */
 #define PHY_COMPAT_POLL_MS	200
@@ -71,6 +77,9 @@ static DEFINE_MUTEX(phy_drv_lock);
 
 static struct workqueue_struct *phy_wq;
 
+/* 由 MDIO 驱动（后续接上时）调用，把总线挂到 compat 层 */
+static bus_drv_t *phy_compat_bus;
+
 static struct phy_compat_dev *compat_find(phy_dev_t *phy)
 {
 	struct phy_compat_dev *cd;
@@ -79,6 +88,190 @@ static struct phy_compat_dev *compat_find(phy_dev_t *phy)
 		if (cd->phy == phy)
 			return cd;
 	return NULL;
+}
+
+static phy_dev_t *compat_find_by_handle(dt_handle_t handle)
+{
+	struct phy_compat_dev *cd;
+
+	if (!handle)
+		return NULL;
+
+	mutex_lock(&compat_lock);
+	list_for_each_entry(cd, &compat_dev_list, node) {
+		if (cd->phy->dt_handle == handle) {
+			mutex_unlock(&compat_lock);
+			return cd->phy;
+		}
+	}
+	mutex_unlock(&compat_lock);
+	return NULL;
+}
+
+/* ------------------------------------------------------------------ */
+/*  PHY 框架的总线入口                                                  */
+/*                                                                     */
+/*  原厂 bus_drv.c 只做「按类型查表」，表项由 bus_drv_mdio_v1.c 填。    */
+/*  我们暂时没有 MDIO 驱动，先给出同样的入口，总线为空时返回 NULL，    */
+/*  phy_bus_read/write 自然退化为 no-op（不会踩寄存器）。               */
+/* ------------------------------------------------------------------ */
+
+bus_drv_t *bus_drv_get(bus_type_t bus_type)
+{
+	if (bus_type == BUS_TYPE_MDIO_V1_INT)
+		return phy_compat_bus;
+	return NULL;
+}
+
+void phy_compat_set_bus(bus_drv_t *bus)
+{
+	phy_compat_bus = bus;
+}
+
+/* ------------------------------------------------------------------ */
+/*  PHY 框架占位驱动                                                    */
+/*                                                                     */
+/*  原厂的 phy_drv_6846_egphy.c / phy_drv_6856_sgmii.c 有源码，但它们  */
+/*  依赖 phy_drv_brcm.o（prebuilt，且是 aarch64，本板 armv7 用不了）， */
+/*  所以这里按「标准 MII 寄存器」给一套最小 read_status：                */
+/*    · 读 BMSR 判 link（latch-low，读两次）                             */
+/*    · 读 BMCR 判 speed/duplex（自协商完成后 BMCR 反映当前速率）        */
+/*  真正的 EGPHY 影子寄存器/EEE/AFE 校准留给后续移植，不影响 switch0     */
+/*  建成与端口 up/down 的基本判定。                                     */
+/* ------------------------------------------------------------------ */
+
+static int phy_compat_read_status(phy_dev_t *phy)
+{
+	uint16_t bmsr = 0, bmcr = 0;
+	int rc;
+
+	if (!phy)
+		return -EINVAL;
+
+	if (!phy->bus_drv) {
+		phy->link = 0;
+		phy->speed = PHY_SPEED_UNKNOWN;
+		phy->duplex = PHY_DUPLEX_UNKNOWN;
+		return -ENODEV;
+	}
+
+	rc = phy_bus_read(phy, MII_BMSR, &bmsr);
+	if (rc)
+		return rc;
+	/* BMSR 的 link 位是 latch-low：第一次读清掉旧值，第二次才是当前值 */
+	phy_bus_read(phy, MII_BMSR, &bmsr);
+	phy_bus_read(phy, MII_BMCR, &bmcr);
+
+	if (!(bmsr & BMSR_LSTATUS)) {
+		phy->link = 0;
+		phy->speed = PHY_SPEED_UNKNOWN;
+		phy->duplex = PHY_DUPLEX_UNKNOWN;
+		return 0;
+	}
+
+	phy->link = 1;
+	phy->duplex = (bmcr & BMCR_FULLDPLX) ? PHY_DUPLEX_FULL : PHY_DUPLEX_HALF;
+	if (bmcr & BMCR_SPEED1000)
+		phy->speed = PHY_SPEED_1000;
+	else if (bmcr & BMCR_SPEED100)
+		phy->speed = PHY_SPEED_100;
+	else
+		phy->speed = PHY_SPEED_10;
+
+	return 0;
+}
+
+static phy_drv_t phy_drv_compat_egphy = {
+	.phy_type = PHY_TYPE_6846_EGPHY,
+	.name = "EGPHY",
+	.read_status = phy_compat_read_status,
+};
+
+static phy_drv_t phy_drv_compat_sgmii = {
+	.phy_type = PHY_TYPE_6856_SGMII,
+	.name = "SGMII",
+	.read_status = phy_compat_read_status,
+};
+
+/* DTS 里的 phy-type 字符串 → phy_type_t（与厂商 phy dt_parsing 一致） */
+static const struct {
+	const char *name;
+	phy_type_t type;
+} phy_compat_type_map[] = {
+	{ "EGPHY",		PHY_TYPE_6846_EGPHY },
+	{ "SGMII",		PHY_TYPE_6856_SGMII },
+	{ "PON",		PHY_TYPE_PON },
+	{ "EXT1",		PHY_TYPE_EXT1 },
+	{ "EXT3",		PHY_TYPE_EXT3 },
+	{ "158CLASS_SERDES",	PHY_TYPE_158CLASS_SERDES },
+};
+
+static phy_type_t phy_compat_type_from_name(const char *name)
+{
+	int i;
+
+	if (!name)
+		return PHY_TYPE_UNKNOWN;
+
+	for (i = 0; i < ARRAY_SIZE(phy_compat_type_map); i++)
+		if (!strcmp(name, phy_compat_type_map[i].name))
+			return phy_compat_type_map[i].type;
+
+	return PHY_TYPE_UNKNOWN;
+}
+
+/*
+ * 按 DTS 节点创建 PHY 对象（对应厂商 phy/dt_parsing.c 的 phy_dev_dt_probe）。
+ * 只在 phy_drv_find_device() 找不到时按需创建，避免依赖 phy 框架的
+ * late_initcall 探测顺序。
+ */
+static phy_dev_t *phy_compat_dt_create(dt_handle_t handle)
+{
+	const char *type_name = NULL;
+	struct device_node *parent;
+	phy_type_t type;
+	phy_dev_t *phy;
+	uint32_t addr = 0;
+
+	if (!handle || !of_device_is_compatible(handle, "brcm,bcaphy"))
+		return NULL;
+
+	if (of_property_read_string(handle, "phy-type", &type_name))
+		return NULL;
+
+	type = phy_compat_type_from_name(type_name);
+	if (type == PHY_TYPE_UNKNOWN) {
+		pr_warn("bcm-phy: unsupported phy-type '%s' on %pOF\n",
+			type_name, handle);
+		return NULL;
+	}
+
+	of_property_read_u32(handle, "reg", &addr);
+
+	phy = phy_dev_add(type, addr, NULL);
+	if (!phy) {
+		pr_info("bcm-phy: no driver registered for %s (type %d)\n",
+			type_name, type);
+		return NULL;
+	}
+
+	phy->dt_handle = handle;
+
+	/* mdio 节点的 bus-type 目前只有 MDIO_V1；没有总线驱动时 bus 为 NULL */
+	parent = of_get_parent(handle);
+	if (parent) {
+		const char *bus_type = NULL;
+
+		if (!of_property_read_string(parent, "bus-type", &bus_type) &&
+		    !strcmp(bus_type, "MDIO_V1"))
+			phy->bus_drv = bus_drv_get(BUS_TYPE_MDIO_V1_INT);
+		of_node_put(parent);
+	}
+
+	pr_info("bcm-phy: %s addr %u from %pOF\n",
+		phy->name, phy->addr, handle);
+
+	return phy;
 }
 
 /* ------------------------------------------------------------------ */
@@ -95,8 +288,8 @@ static void phy_compat_poll_work(struct work_struct *work)
 		return;
 
 	/* 具体 PHY 驱动自己读状态寄存器并更新 phy->link/speed/duplex */
-	if (phy->phy_drv->read_status)
-		phy->phy_drv->read_status(phy);
+	if (phy_dev_read_status(phy))
+		goto out;
 
 	if (phy->link != cd->last_link ||
 	    phy->speed != cd->last_speed ||
@@ -107,6 +300,7 @@ static void phy_compat_poll_work(struct work_struct *work)
 		phy_dev_link_change_notify(phy);
 	}
 
+out:
 	if (cd->polling)
 		queue_delayed_work(phy_wq, &cd->poll,
 				   msecs_to_jiffies(PHY_COMPAT_POLL_MS));
@@ -135,11 +329,19 @@ void phy_dev_link_change_register(phy_dev_t *phy_dev, link_change_cb_t cb, void 
 
 	cd->cb = cb;
 	cd->cb_ctx = ctx;
+	phy_dev->link_change_cb = cb;
+	phy_dev->link_change_ctx = ctx;
 
 	/* 记下当前状态，避免注册后第一次轮询就误报一次 link 变化 */
 	cd->last_link = phy_dev->link;
 	cd->last_speed = phy_dev->speed;
 	cd->last_duplex = phy_dev->duplex;
+
+	/* 具体 PHY 驱动若自带定时器，交给它；否则用 compat 的轮询 */
+	if (phy_dev->phy_drv && phy_dev->phy_drv->link_change_register) {
+		if (!phy_dev->phy_drv->link_change_register(phy_dev))
+			return;
+	}
 
 	if (!cd->polling && phy_wq) {
 		cd->polling = 1;
@@ -165,7 +367,12 @@ void phy_dev_link_change_unregister(phy_dev_t *phy_dev)
 	cd->polling = 0;
 	cd->cb = NULL;
 	cd->cb_ctx = NULL;
+	phy_dev->link_change_cb = NULL;
+	phy_dev->link_change_ctx = NULL;
 	cancel_delayed_work_sync(&cd->poll);
+
+	if (phy_dev->phy_drv && phy_dev->phy_drv->link_change_unregister)
+		phy_dev->phy_drv->link_change_unregister(phy_dev);
 }
 
 void phy_dev_link_change_notify(phy_dev_t *phy_dev)
@@ -177,13 +384,19 @@ void phy_dev_link_change_notify(phy_dev_t *phy_dev)
 	if (!phy_dev)
 		return;
 
-	mutex_lock(&compat_lock);
-	cd = compat_find(phy_dev);
-	if (cd) {
-		cb = cd->cb;
-		ctx = cd->cb_ctx;
+	/* link_change_cb/ctx 是厂商结构体里的正式字段，优先用它们 */
+	cb = phy_dev->link_change_cb;
+	ctx = phy_dev->link_change_ctx;
+
+	if (!cb) {
+		mutex_lock(&compat_lock);
+		cd = compat_find(phy_dev);
+		if (cd) {
+			cb = cd->cb;
+			ctx = cd->cb_ctx;
+		}
+		mutex_unlock(&compat_lock);
 	}
-	mutex_unlock(&compat_lock);
 
 	if (!cb)
 		return;
@@ -384,21 +597,17 @@ int phy_dev_del(phy_dev_t *phy_dev)
 
 phy_dev_t *phy_drv_find_device(dt_handle_t handle)
 {
-	struct phy_compat_dev *cd;
-	phy_dev_t *found = NULL;
+	phy_dev_t *found;
 
 	if (!handle)
 		return NULL;
 
-	mutex_lock(&compat_lock);
-	list_for_each_entry(cd, &compat_dev_list, node) {
-		if (cd->phy->dt_handle == handle) {
-			found = cd->phy;
-			break;
-		}
-	}
-	mutex_unlock(&compat_lock);
-	return found;
+	found = compat_find_by_handle(handle);
+	if (found)
+		return found;
+
+	/* 没注册过就看它是不是 DTS 里的 brcm,bcaphy，按需创建 */
+	return phy_compat_dt_create(handle);
 }
 
 /*
@@ -407,9 +616,9 @@ phy_dev_t *phy_drv_find_device(dt_handle_t handle)
  *   delay_rx/tx : RGMII 时钟延迟（ns）
  *   instance    : 同一驱动多实例时区分（EGPHY 的 core/lane 索引）
  *
- * TODO(下一轮)：这里应该按 DTS 的 mdio 节点找已注册总线
- *   （bus_drv_get(BUS_TYPE_MDIO_V1_INT) 或对应 bus_drv_mdio_v1.c 注册的那条），
- *   目前先留空 —— 总线接上之前，PHY 的 read/write 只能靠驱动自己的 ops。
+ * 总线目前只有 MDIO_V1（bus_drv_mdio_v1.c 还没编进来），拿不到总线时
+ * bus_drv 为 NULL，phy_bus_read/write 退化为 no-op —— 宁可读不到寄存器，
+ * 也不要在 bring-up 阶段乱写 PHY。
  */
 void phy_dev_attach(phy_dev_t *phy_dev, uint32_t phy_mode, int delay_rx,
 		    int delay_tx, int instance)
@@ -425,6 +634,13 @@ void phy_dev_attach(phy_dev_t *phy_dev, uint32_t phy_mode, int delay_rx,
 		phy_dev->core_index = instance;
 		phy_dev->lane_index = instance;
 	}
+
+	if (!phy_dev->bus_drv)
+		phy_dev->bus_drv = bus_drv_get(BUS_TYPE_MDIO_V1_INT);
+
+	/* 厂商语义：attach 之后让驱动做一次按端口的初始化准备 */
+	if (phy_drv_dev_add(phy_dev))
+		pr_warn("bcm-phy: %s dev_add failed\n", phy_dev->name);
 }
 
 /* ------------------------------------------------------------------ */
@@ -495,34 +711,76 @@ void phy_dev_prog(phy_dev_t *phy_dev, prog_entry_t *prog_entry)
 	}
 }
 
+/* 厂商私有操作入口：DSL/SERDES 才会实现 priv_fun，EGPHY 为 NULL */
+int phy_priv_fun(phy_dev_t *phy_dev, int op, ...)
+{
+	va_list ap;
+	int rc;
+
+	if (!phy_dev || !phy_dev->phy_drv || !phy_dev->phy_drv->priv_fun)
+		return -EOPNOTSUPP;
+
+	va_start(ap, op);
+	rc = phy_dev->phy_drv->priv_fun(phy_dev, op, ap);
+	va_end(ap);
+	return rc;
+}
+
 /* ------------------------------------------------------------------ */
 /*  初始化 / 退出（由 bcm_enet.ko 的 module_init 调用）                  */
 /* ------------------------------------------------------------------ */
 
 int phy_drv_compat_init(void)
 {
+	if (phy_wq)
+		return 0;
+
 	phy_wq = alloc_ordered_workqueue("bcm_phy", 0);
 	if (!phy_wq)
 		return -ENOMEM;
+
+	/*
+	 * 原厂 PHY 驱动模块（bcm_phy.ko）会自己 phy_driver_set()；我们没有
+	 * 源码、prebuilt 又是 aarch64，先注册两个标准 MII 占位驱动，保证
+	 * phy_dev_add() 能建出对象、DTS 端口能解析下去。
+	 */
+	mutex_lock(&phy_drv_lock);
+	if (!phy_drv_table[PHY_TYPE_6846_EGPHY])
+		phy_drv_table[PHY_TYPE_6846_EGPHY] = &phy_drv_compat_egphy;
+	if (!phy_drv_table[PHY_TYPE_6856_SGMII])
+		phy_drv_table[PHY_TYPE_6856_SGMII] = &phy_drv_compat_sgmii;
+	mutex_unlock(&phy_drv_lock);
+
 	return 0;
 }
 
 void phy_drv_compat_exit(void)
 {
 	struct phy_compat_dev *cd, *tmp;
+	LIST_HEAD(dead);
 
 	if (!phy_wq)
 		return;
 
+	/*
+	 * 不能持 compat_lock 调 cancel_delayed_work_sync()：轮询回调里会走
+	 * phy_dev_link_change_notify() → compat_lock，持锁等待会死锁。
+	 * 先把节点摘到局部链表，解锁后再停 work、释放。
+	 */
 	mutex_lock(&compat_lock);
 	list_for_each_entry_safe(cd, tmp, &compat_dev_list, node) {
 		cd->polling = 0;
+		list_move(&cd->node, &dead);
+	}
+	mutex_unlock(&compat_lock);
+
+	list_for_each_entry_safe(cd, tmp, &dead, node) {
 		cancel_delayed_work_sync(&cd->poll);
 		cancel_work_sync(&cd->work);
 		list_del(&cd->node);
+		kfree(cd->phy);
 		kfree(cd);
 	}
-	mutex_unlock(&compat_lock);
 
 	destroy_workqueue(phy_wq);
 	phy_wq = NULL;

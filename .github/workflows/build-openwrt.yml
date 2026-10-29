@@ -212,7 +212,7 @@ jobs:
           rm -rf "$PROBE"; mkdir -p "$PROBE"
           printf '%s\n' \
             'obj-m := bcm_enet.o' \
-            'bcm_enet-y := enet.o port.o runner.o dt_parsing.o g9991.o mux_index.o phy_drv_pon.o sw_common.o port_types.o phy_drv_compat.o enet_stubs.o' \
+            'bcm_enet-y := enet.o port.o runner.o dt_parsing.o g9991.o mux_index.o phy_drv_pon.o sw_common.o port_types.o phy_drv_compat.o enet_stubs.o enet_framework_stubs.o bcm_chip_arch_compat.o' \
             > "$PROBE/Kbuild"
           for f in enet port runner dt_parsing g9991 mux_index phy_drv_pon sw_common port_types; do
             ln -sf "$ENET/$f.c" "$PROBE/$f.c"
@@ -220,6 +220,8 @@ jobs:
           # 我们自己补的 PHY 框架实现（原厂只有 prebuilt phy_drv.o），一起编进来
           ln -sf "$COMPAT/phy_drv_compat.c" "$PROBE/phy_drv_compat.c"
           ln -sf "$COMPAT/enet_stubs.c" "$PROBE/enet_stubs.c"
+          ln -sf "$COMPAT/enet_framework_stubs.c" "$PROBE/enet_framework_stubs.c"
+          ln -sf "$COMPAT/bcm_chip_arch_compat.c" "$PROBE/bcm_chip_arch_compat.c"
           GCC=$(find "$TOP/sources/openwrt/staging_dir" -path '*toolchain-*/bin/*-gcc' 2>/dev/null | head -1)
           if [ -z "$GCC" ]; then echo "cross gcc not found, skip"; exit 0; fi
           export PATH="$(dirname "$GCC"):$PATH"
@@ -230,15 +232,17 @@ jobs:
           # 6.18 的 sk_buff 已无 queue 成员（4.1 由 Broadcom patch 加）；探针阶段临时去掉对应 accessor
           sed -i '/__BUILD_NBUFF_\(SET\|GET\)_ACCESSOR(.*queue/d' "$SDK/kernel/bcmkernel/include/linux/nbuff.h" || true
           # 6.18 已移除 struct switchdev_ops；探针阶段跳过该字段
-          sed -i 's/#if defined(CONFIG_NET_SWITCHDEV)/#if 0/' "$ENET/port.h" || true
+          sed -i 's/#if defined(CONFIG_NET_SWITCHDEV)/#if 0/; s/#ifdef CONFIG_NET_SWITCHDEV/#if 0/' \
+                 "$ENET/port.h" "$ENET/enet.c" "$ENET/g9991.c" "$ENET/runner.c" \
+                 "$ENET/runner_common.h" "$ENET/enet_inline_platform.h" \
+                 "$ENET/enet_inline_runner.h" "$ENET/sw_common.h" || true
+          # dt_parsing.c 里 #include "drivers/bcm_chip_arch.c" 是厂商生成文件，GPL 包没带；
+          # 换成 compat/bcm_chip_arch_compat.c 提供的同名数组（该文件单独编进模块）
+          sed -i 's|#include "drivers/bcm_chip_arch.c"|#include <bcm_chip_arch.h>|' "$ENET/dt_parsing.c" || true
           # autogen 的 rdpa_ag_iptv.h 未 include rdpa_mcast.h，导致 rdpa_fc_mcast_flow_t 未定义；探针阶段替换为 key_t
           sed -i 's/rdpa_fc_mcast_flow_t/rdpa_fc_mcast_flow_key_t/g' "$SDK/rdp/drivers/rdpa_gpl/include/autogen/rdpa_ag_iptv.h" || true
           # 不能 include bcm_skbuff.h/bcm_netdevice.h（会整体替换 sk_buff/net_device，与 6.18 冲突）
-          # 注意：不再改内核头。厂商私有类型统一由 compat/enet_compat.h 打桩。
-          # 不再给内核头注入 Broadcom 字段（会破坏 struct 布局）；改用 compat 桩
-          # enet.c 里的 switchdev_ops 段（6.18 无该成员）；g9991.c 的 port_ops
-          # 初始化里也有 .switchdev_ops 指定初始化，必须一起关掉
-          sed -i 's/#if defined(CONFIG_NET_SWITCHDEV)/#if 0/' "$ENET/enet.c" "$ENET/g9991.c" || true
+          # 厂商私有类型统一由 compat/enet_compat.h 打桩。
           # 6.18 的 sk_buff 无 recycle_flags（Broadcom patch 成员），探针阶段注释掉
           sed -i 's|skb->recycle_flags &= SKB_NO_RECYCLE;|/* compat: no recycle_flags in 6.18 */|' "$ENET/enet.c" || true
           sed -i 's#skb->recycle_flags |= rx_info->extra_skb_flags;#/* compat */#' "$ENET/enet.c" || true
@@ -255,6 +259,12 @@ jobs:
           grep -nE "error:|fatal error:" probe_full.txt | head -60 || true
           echo "=== error count ==="
           grep -cE "error:|fatal error:" probe_full.txt || true
+          # 模块链接允许未解析符号（modpost 只告警），insmod 时才会报 Unknown symbol。
+          # 这里把完整清单打出来，下一轮按它补桩。
+          echo "=== modpost undefined symbols ==="
+          grep -E "undefined!" probe_full.txt | sed -n 's/.*modpost: "\([^"]*\)".*/\1/p' | sort -u | head -300 || true
+          echo "=== undefined count ==="
+          grep -cE "undefined!" probe_full.txt || true
           # 编出来就直接把 .ko 拿出来（不用等 OpenWrt 包被 .config 选中）
           if [ -f "$PROBE/bcm_enet.ko" ]; then
             mkdir -p out && cp -v "$PROBE/bcm_enet.ko" out/ && \

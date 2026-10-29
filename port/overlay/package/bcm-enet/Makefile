@@ -44,7 +44,10 @@ BDMF_DIR:=$(SDK_DIR)/sdk/bcmdrivers/opensource/char/bdmf/impl1
 
 # 与 CI 探针的 bcm_enet-y 完全一致（enit_ingress / archer_enet 等不走这条路径）
 # phy_drv_compat.o 是我们自己补的 PHY 框架实现（原厂只有 prebuilt phy_drv.o，无源码）
-ENET_OBJS:=enet port runner dt_parsing g9991 mux_index phy_drv_pon sw_common port_types phy_drv_compat enet_stubs
+# enet_framework_stubs.o 补 mac_drivers_set/init、mac_dev_dt_probe（unimac 源码缺失）
+# bcm_chip_arch_compat.o 补厂商生成文件 drivers/bcm_chip_arch.c（GPL 包没带）
+ENET_OBJS:=enet port runner dt_parsing g9991 mux_index phy_drv_pon sw_common port_types \
+           phy_drv_compat enet_stubs enet_framework_stubs bcm_chip_arch_compat
 
 define Build/Prepare
 	$(INSTALL_DIR) $(PKG_BUILD_DIR)/compat $(PKG_BUILD_DIR)/shim/linux
@@ -52,14 +55,27 @@ define Build/Prepare
 	$(CP) $(COMPAT_SRC)/*.h $(PKG_BUILD_DIR)/compat/
 	$(CP) $(COMPAT_SRC)/phy_drv_compat.c $(PKG_BUILD_DIR)/
 	$(CP) $(COMPAT_SRC)/enet_stubs.c $(PKG_BUILD_DIR)/
+	$(CP) $(COMPAT_SRC)/enet_framework_stubs.c $(PKG_BUILD_DIR)/
+	$(CP) $(COMPAT_SRC)/bcm_chip_arch_compat.c $(PKG_BUILD_DIR)/
 	# 6.18 的 sk_buff 没有厂商补丁加的 queue 成员 → 屏蔽 nbuff.h 里对应 accessor
 	$(CP) $(SDK_DIR)/sdk/kernel/bcmkernel/include/linux/nbuff.h $(PKG_BUILD_DIR)/shim/linux/nbuff.h
 	sed -i '/__BUILD_NBUFF_\(SET\|GET\)_ACCESSOR(.*queue/d' $(PKG_BUILD_DIR)/shim/linux/nbuff.h
 	# 6.18 已移除 struct switchdev_ops → 关掉厂商的 switchdev 段
 	# g9991.c 也要处理：它的 port_ops 初始化里有 .switchdev_ops 指定初始化，
 	# 只改 port.h 不改这里会报 "port_ops_t has no member named switchdev_ops"
-	sed -i 's/#if defined(CONFIG_NET_SWITCHDEV)/#if 0/' \
-		$(PKG_BUILD_DIR)/enet.c $(PKG_BUILD_DIR)/port.h $(PKG_BUILD_DIR)/g9991.c
+	# runner.c / runner_common.h 里的 switchdev 原型也要一起关（否则
+	# 'struct switchdev_attr declared inside parameter list' 被 -Werror 拦下）
+	sed -i 's/#if defined(CONFIG_NET_SWITCHDEV)/#if 0/; s/#ifdef CONFIG_NET_SWITCHDEV/#if 0/' \
+		$(PKG_BUILD_DIR)/enet.c $(PKG_BUILD_DIR)/port.h $(PKG_BUILD_DIR)/g9991.c \
+		$(PKG_BUILD_DIR)/runner.c $(PKG_BUILD_DIR)/runner_common.h \
+		$(PKG_BUILD_DIR)/enet_inline_platform.h $(PKG_BUILD_DIR)/enet_inline_runner.h \
+		$(PKG_BUILD_DIR)/sw_common.h
+	# dt_parsing.c 会 #include "drivers/bcm_chip_arch.c"（厂商生成文件，GPL 包缺失）
+	# 换成仓库里的 compat 数据文件（已作为独立 .o 编进模块）
+	sed -i 's|#include "drivers/bcm_chip_arch.c"|#include <bcm_chip_arch.h>|' $(PKG_BUILD_DIR)/dt_parsing.c
+	# 6.18 的 sk_buff 无 recycle_flags（Broadcom patch 成员）
+	sed -i 's|skb->recycle_flags &= SKB_NO_RECYCLE;|/* compat: no recycle_flags in 6.18 */|' $(PKG_BUILD_DIR)/enet.c
+	sed -i 's#skb->recycle_flags |= rx_info->extra_skb_flags;#/* compat */#' $(PKG_BUILD_DIR)/enet.c
 	printf '%s\n' \
 		'obj-m := bcm_enet.o' \
 		'bcm_enet-y := $(addsuffix .o,$(ENET_OBJS))' \
