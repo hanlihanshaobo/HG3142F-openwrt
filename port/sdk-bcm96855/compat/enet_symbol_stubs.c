@@ -145,7 +145,9 @@ struct sk_buff *skb_header_alloc(void)
  */
 int mac_dev_del(mac_dev_t *mac_dev)
 {
-	/* unimac_mac.c 的 mac_dev 是 kzalloc 出来的 */
+	/* 先让驱动自己 iounmap/停硬件，再释放 unimac_mac.c kzalloc 的对象 */
+	if (mac_dev && mac_dev->mac_drv && mac_dev->mac_drv->dev_del)
+		mac_dev->mac_drv->dev_del(mac_dev);
 	kfree(mac_dev);
 	return 0;
 }
