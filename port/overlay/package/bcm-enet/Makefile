@@ -72,6 +72,11 @@ define Build/Prepare
 	# port.c 的 port_init 失败会 BUG()（panic）；bring-up 阶段改为继续返回
 	sed -i 's|^        BUG();.*|        return rc;|' \
 		$(PKG_BUILD_DIR)/port.c
+	# runner.c 的 enetxapi_queues_init() 在本板（没有 RDPA 队列配置）会
+	# 让 chan==NULL 后跳到 exit，但 rc 是未初始化的栈变量，可能随机返回
+	# 失败，把刚建好的 netdev 又拆掉。这里改成无队列时直接成功返回。
+	sed -i 's|^    \*_chan = chan = _create_rdpa_queues();|&\n    if (!chan) { enet_err("compat: no RDPA CPU queue, RX disabled"); return 0; }|' \
+		$(PKG_BUILD_DIR)/runner.c
 	sed -i 's/#if defined(CONFIG_NET_SWITCHDEV)/#if 0/; s/#ifdef CONFIG_NET_SWITCHDEV/#if 0/' \
 		$(PKG_BUILD_DIR)/enet.c $(PKG_BUILD_DIR)/port.h $(PKG_BUILD_DIR)/g9991.c \
 		$(PKG_BUILD_DIR)/runner_common.h
