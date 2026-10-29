@@ -939,10 +939,15 @@ int phy_drv_compat_init(void)
 	return 0;
 }
 
+extern void rdp_c2_restore(void);
+
 void phy_drv_compat_exit(void)
 {
 	struct phy_compat_dev *cd, *tmp;
 	LIST_HEAD(dead);
+
+	/* C2-a 写过的 QM 寄存器恢复原值、释放 FPM 池（未使能 FPM，安全） */
+	rdp_c2_restore();
 
 	if (!phy_wq)
 		return;

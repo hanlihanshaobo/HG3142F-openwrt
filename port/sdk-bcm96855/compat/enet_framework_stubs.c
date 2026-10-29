@@ -28,6 +28,7 @@
 #include "phy_drv_compat.h"
 
 extern void rdp_probe_run(void);
+extern void rdp_c2_run(void);
 
 int mac_drivers_set(void)
 {
@@ -35,6 +36,9 @@ int mac_drivers_set(void)
 
 	/* C1：只在 insmod 带 rdp_probe=1 时执行（只读，不写寄存器） */
 	rdp_probe_run();
+
+	/* C2-a：只在 insmod 带 rdp_c2=1 时执行（FPM/QM 子集，写后立即读回） */
+	rdp_c2_run();
 
 	rc = phy_drv_compat_init();
 
