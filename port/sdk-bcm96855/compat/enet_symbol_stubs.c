@@ -482,6 +482,21 @@ static int runner_port_mtu_set_stub(enetx_port_t *port, int mtu)
  * 负责 netif_carrier_on/off），这样 `ip link set lan0 up` 后不用等
  * 下一次 200ms 轮询。读失败就保持现状，轮询会继续跟踪。
  */
+/*
+ * 现场证据（2026-10-29 run #83）：PHY 上电、carrier 起来后内核立刻发包，
+ * enet.c:1196 直接调用 `egress_port->p.ops->dispatch_pkt()`，而我们的
+ * port_runner_port 没实现这个 op → 空指针调用 → 设备重启。
+ * 数据面没有 RDP，唯一安全语义是「释放 + 丢弃并计数」（与厂商在
+ * runner_with_switch.c:185-189 的失败路径一致）。
+ */
+static int runner_port_dispatch_pkt_stub(dispatch_info_t *info)
+{
+	if (info && info->pNBuff && IS_SKBUFF_PTR(info->pNBuff))
+		kfree_skb(PNBUFF_2_SKBUFF(info->pNBuff));
+
+	return -1;	/* 非 0 → 调用方记 tx_dropped_dispatch */
+}
+
 static void runner_port_open_stub(enetx_port_t *port)
 {
 	phy_dev_t *phy = port->p.phy;
@@ -556,6 +571,7 @@ sw_ops_t port_runner_sw = {
 port_ops_t port_runner_port = {
 	.init = runner_port_init_stub,
 	.uninit = runner_port_uninit_stub,
+	.dispatch_pkt = runner_port_dispatch_pkt_stub,
 	.mtu_set = runner_port_mtu_set_stub,
 	.open = runner_port_open_stub,
 	.stop = runner_port_stop_stub,
