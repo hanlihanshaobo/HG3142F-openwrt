@@ -15,10 +15,13 @@ config globals 'globals'
 	option ula_prefix 'fd3a:8f21:5c07::/48'
 
 # RTL8125 内部没有烧录 MAC（r8169 每次启动都会 "can't read MAC address" 并随机生成），
-# 这里固定成设备标签 MAC，避免 DHCP 租约每次变化。
+# 必须由系统提供一个稳定值，否则 DHCP 租约每次都变。
+#
+# 这里**不写死 MAC**：同一个型号装到不同设备上会全部撞车，DHCP 会互相打架。
+# 具体值由 /etc/uci-defaults/97-mb4784w-mac 在首次启动时生成并落盘
+# （首字节固定 02 = 本地管理地址），之后每次启动复用。
 config device
 	option name 'eth0'
-	option macaddr '68:e9:05:b4:fd:b8'
 
 config device
 	option name 'br-lan'

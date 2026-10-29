@@ -1,0 +1,37 @@
+#!/bin/sh
+# HG3142F / HG3142F：给 eth0 生成一个「每台设备不同、且重启不变」的 MAC。
+#
+# 为什么需要：
+#   PCIe 上的 RTL8125 没有烧录 MAC，r8169 启动时打印
+#   "can't read MAC address, setting random one" 并每次随机一个地址，
+#   导致 DHCP 租约每次变化。
+#
+# 为什么不能在 /etc/config/network 里写死：
+#   这个固件是要装到很多台同型号设备上的。写死一个 MAC，整个局域网里
+#   所有设备都是同一个地址，DHCP 分配、ARP、交换表全乱。
+#
+# 做法：
+#   首次启动随机生成 6 字节，首字节固定 0x02（本地管理 + 单播位），
+#   写进 uci 落盘（overlay），之后每次启动复用；只有恢复出厂设置才重新生成。
+#
+# 以后如果确认了原厂真实 MAC 的存储位置（ipg 分区里的配置是 AES-CBC 加密的，
+# key 已知但格式还没完全逆完），把 gen_mac() 换成读真实值即可，其余不用动。
+
+[ -f /etc/config/network ] || exit 0
+
+idx=$(uci show network 2>/dev/null |
+	sed -n "s/^network\.\(@device\[[0-9]*\]\)\.name='eth0'$/\1/p" | head -1)
+[ -n "$idx" ] || exit 0
+
+case "$(uci -q get "network.$idx.macaddr")" in
+'' | 00:00:00:00:00:00)
+	r=$(dd if=/dev/urandom bs=6 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
+	[ ${#r} -eq 12 ] || exit 0
+	mac="02:$(echo "$r" | cut -c3-4):$(echo "$r" | cut -c5-6):$(echo "$r" | cut -c7-8):$(echo "$r" | cut -c9-10):$(echo "$r" | cut -c11-12)"
+	uci set "network.$idx.macaddr=$mac"
+	uci commit network
+	logger -t mb4784w-mac "generated stable local-admin MAC $mac for eth0"
+	;;
+esac
+
+exit 0
