@@ -42,9 +42,27 @@ int mac_drivers_init(void)
 	return 0;
 }
 
+extern mac_drv_t mac_drv_unimac;
+struct unimac_compat_priv *unimac_compat_priv_get(uint32_t id);
+
 mac_dev_t *mac_dev_dt_probe(const dt_handle_t handle, uint32_t port_index)
 {
-	pr_err("bcm_enet: no MAC driver for port %u (%pOF), unimac source missing\n",
-	       port_index, handle);
-	return NULL;
+	mac_dev_t *mac_dev;
+
+	mac_dev = kzalloc(sizeof(*mac_dev), GFP_KERNEL);
+	if (!mac_dev)
+		return NULL;
+
+	mac_dev->mac_drv = &mac_drv_unimac;
+	mac_dev->mac_id = port_index;
+	mac_dev->priv = unimac_compat_priv_get(port_index);
+
+	if (mac_drv_dev_add(mac_dev)) {
+		kfree(mac_dev);
+		return NULL;
+	}
+
+	pr_info("bcm_enet: registered UNIMAC:%u for %pOF\n",
+		port_index, handle);
+	return mac_dev;
 }

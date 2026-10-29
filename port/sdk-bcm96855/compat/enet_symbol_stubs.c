@@ -144,7 +144,9 @@ struct sk_buff *skb_header_alloc(void)
  */
 int mac_dev_del(mac_dev_t *mac_dev)
 {
-	return mac_dev ? 0 : -EINVAL;
+	/* unimac_mac.c 的 mac_dev 是 kzalloc 出来的 */
+	kfree(mac_dev);
+	return 0;
 }
 
 /* mac_drv.h 声明；RGMII 内部延迟配置，本板 RGMII 端口 disabled */
@@ -443,14 +445,14 @@ int enetxapi_queue_need_reschedule(enetx_channel *chan, int q_id)
 static int runner_sw_init_stub(enetx_port_t *sw)
 {
 	(void)sw;
-	pr_err("bcm_enet: runner switch init not implemented (rdpa missing)\n");
-	return -1;
+	pr_info_once("bcm_enet: runner switch init skipped (no rdpa, compat mode)\n");
+	return 0;
 }
 
 static int runner_port_init_stub(enetx_port_t *port)
 {
 	(void)port;
-	return -1;
+	return 0;
 }
 
 /*

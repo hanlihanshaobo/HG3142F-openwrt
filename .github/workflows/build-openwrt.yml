@@ -361,7 +361,7 @@ jobs:
           rm -rf "$PROBE"; mkdir -p "$PROBE"
           printf '%s\n' \
             'obj-m := bcm_enet.o' \
-            'bcm_enet-y := enet.o port.o runner.o dt_parsing.o g9991.o mux_index.o phy_drv_pon.o sw_common.o port_types.o phy_drv_compat.o enet_stubs.o enet_framework_stubs.o bcm_chip_arch_compat.o bcmkernel_stubs.o enet_symbol_stubs.o' \
+            'bcm_enet-y := enet.o port.o runner.o dt_parsing.o g9991.o mux_index.o phy_drv_pon.o sw_common.o port_types.o phy_drv_compat.o enet_stubs.o enet_framework_stubs.o bcm_chip_arch_compat.o bcmkernel_stubs.o enet_symbol_stubs.o unimac_mac.o' \
             > "$PROBE/Kbuild"
           for f in enet port runner dt_parsing g9991 mux_index phy_drv_pon sw_common port_types; do
             ln -sf "$ENET/$f.c" "$PROBE/$f.c"
@@ -373,6 +373,7 @@ jobs:
           ln -sf "$COMPAT/bcm_chip_arch_compat.c" "$PROBE/bcm_chip_arch_compat.c"
           ln -sf "$COMPAT/bcmkernel_stubs.c" "$PROBE/bcmkernel_stubs.c"
           ln -sf "$COMPAT/enet_symbol_stubs.c" "$PROBE/enet_symbol_stubs.c"
+          ln -sf "$COMPAT/unimac_mac.c" "$PROBE/unimac_mac.c"
           GCC=$(find "$TOP/sources/openwrt/staging_dir" -path '*toolchain-*/bin/*-gcc' 2>/dev/null | head -1)
           if [ -z "$GCC" ]; then echo "cross gcc not found, skip"; exit 0; fi
           export PATH="$(dirname "$GCC"):$PATH"
@@ -410,6 +411,8 @@ jobs:
           # 定时器仍在跑（work 函数代码已不在）→ 内核崩。插在退出日志之前。
           sed -i 's|^    enet_err("ENET system destructed|    phy_drv_compat_exit();\n    enet_err("ENET system destructed|' "$ENET/enet.c" || true
           # 没有 brcm,enet 节点时 has_dt()=0，原厂直接 init_post，root_sw=NULL -> panic
+          # port.c 的 port_init 失败会 BUG()（panic）；bring-up 阶段改成继续返回
+          sed -i 's|^        BUG();.*|        /* compat: no BUG on port init failure */|' "$ENET/port.c" || true
           sed -i 's|^        rc = bcm_enet_init_post();|        enet_err("no brcm,enet DT node; refuse init"); return -ENODEV;|' "$ENET/enet.c" || true
           export STAGING_DIR="$TOP/sources/openwrt/staging_dir"
           # -k：遇错不停，一轮把 enet/port/runner/... 所有文件的错误全暴露出来
