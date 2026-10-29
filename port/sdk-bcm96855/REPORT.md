@@ -284,3 +284,63 @@ of_bcmenet switch0: probe with driver of_bcmenet failed with error -22
 
 
 
+
+
+## 2026-10-29：最小 unimac MAC 驱动 → lan0..lan4 建成（run #76-#78）
+
+**源码搜索**：asuswrt-sparse 与 SDK 树都没有 `mac_drv_unimac.c` /
+`unimac_drv_impl1.c`，只有 aarch64 的 `.o`（`mac_drv_unimac.o`、
+`unimac_drv_impl1.o`），armv7 链接不了。因此按 `mac_drv.h` 的 ops 契约手写
+最小实现 `compat/unimac_mac.c`：init/enable/disable/mtu_set/eee_set/
+stats_*/dev_add/dev_del 全部返回 0，不碰寄存器、不做 DMA；`mac_dev_dt_probe`
+用 `kzalloc` 造 `mac_dev_t` 并挂到 `mac_drv_unimac`。
+
+**run #76（首个带 MAC 的 .ko）**：insmod 直接 panic，但栈不在 probe：
+
+```
+Error: Driver 'of_bcmenet' is already registered, aborting...
+bcm_enet_init:L2489 Failed to inititialize, exiting
+Unable to handle kernel NULL pointer dereference at virtual address 0000002c
+PC is at bcm_enet_exit+0x14/0x74 [bcm_enet]
+```
+
+根因：`of_platform_enet_driver` 注册后从不注销，run #73/#74 的 rmmod 把
+driver 留在 platform bus 上 → 本次 `platform_driver_register()` 返回
+-EBUSY → `bcm_enet_init` 错误路径调 `bcm_enet_exit()`，`root_sw==NULL` 时
+`if (root_sw->dev)` 读 0x2c 崩溃。
+
+**修复（#77）**：driver 注册状态记账 + `unregister_enet_platform_device()`；
+module_exit / 初始化失败路径成对注销；`bcm_enet_exit` 对 root_sw、
+enetx_channels 判空且可重入；初始化失败不再 BUG()；sw_ops/port_ops 补
+`.uninit`；port init 按 DT port-cap 设置 LAN/WAN 角色；补 `.mtu_set`。
+
+**run #77 设备结果**：不再 panic，probe 走到最后一个卡口：
+
+```
+_create_rdpa_queues:L493 No RDPA RXQ configuration compiled-in
+enetxapi_queues_init:L545 failed to configure RDPA CPU queues
+bcm_enet_init_post:L2440 Failed to inititialize, exiting (rc=-1089392496)
+```
+
+`rc` 是未初始化栈变量：本板没有 RDPA 队列配置，`_create_rdpa_queues()`
+返回 NULL 后直接 `goto exit`，`rc` 从未赋值。端口/netdev 已在 sw_init 里
+建好，又被 bcm_enet_exit 拆掉。rmmod 干净。
+
+**修复（#78）**：runner.c 的 `enetxapi_queues_init()` 在 `chan==NULL` 时
+直接返回 0（数据面仍 fail-closed）。
+
+**run #78 设备结果**（`.ko` 563,912 B、未决 0）：
+
+```
+enetxapi_queues_init:L507 compat: no RDPA CPU queue, RX disabled
+```
+
+`ls /sys/class/net` → `bcmsw lan0 lan1 lan2 lan3 lan4`（全部 DOWN），
+`ip -br link` 显示 mtu 1500 / qdisc noop / state DOWN。insmod → rmmod →
+再 insmod 两轮均成功，无 -EBUSY、无 WARN、无 panic；rmmod 后设备只剩
+eth0/br-lan/lo。
+
+**当前能力边界**：只有 netdev 对象；ndo_open/xmit/RX/DMA/中断仍是原厂路径
++ fail-closed 桩，没有真实收发。下一步：DMA 环 + unimac 寄存器初始化 +
+中断，再接 runner/RDPA 收发。
+
