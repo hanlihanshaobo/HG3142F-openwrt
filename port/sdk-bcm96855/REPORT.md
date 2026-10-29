@@ -276,6 +276,8 @@ of_bcmenet switch0: probe with driver of_bcmenet failed with error -22
 已加 `work.func` 判空（待下一轮验证）。
 
 - DTS appended-DTB 的坑与检查清单：`port/docs/DTB-APPENDED-NOTE.md`
+- run #74：cancel 判空修复构建成功（bcm-enet-module-74，.ko 543,4xx B、未决 0），
+  未再上设备验证（改动仅消除 rmmod WARN）。
 - 下一步：自写最小 unimac MAC 驱动（或找 32 位源码），替换
   `mac_dev_dt_probe` 的 fail-closed 桩，才能真正建出 lan0..lan4 netdev。
 
