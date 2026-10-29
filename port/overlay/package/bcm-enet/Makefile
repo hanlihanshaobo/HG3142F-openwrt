@@ -76,6 +76,8 @@ define Build/Prepare
 	# 6.18 的 sk_buff 无 recycle_flags（Broadcom patch 成员）
 	sed -i 's|skb->recycle_flags &= SKB_NO_RECYCLE;|/* compat: no recycle_flags in 6.18 */|' $(PKG_BUILD_DIR)/enet.c
 	sed -i 's#skb->recycle_flags |= rx_info->extra_skb_flags;#/* compat */#' $(PKG_BUILD_DIR)/enet.c
+	# 卸载/初始化失败时停掉 compat 的 PHY 轮询 workqueue（否则模块卸载后定时器还在跑）
+	sed -i 's|^    enet_err("ENET system destructed|    phy_drv_compat_exit();\n    enet_err("ENET system destructed|' $(PKG_BUILD_DIR)/enet.c
 	printf '%s\n' \
 		'obj-m := bcm_enet.o' \
 		'bcm_enet-y := $(addsuffix .o,$(ENET_OBJS))' \
@@ -103,6 +105,7 @@ ENET_INC:= \
 
 ENET_DEFS:= \
 	-include $(PKG_BUILD_DIR)/compat/enet_compat.h \
+	-include $(PKG_BUILD_DIR)/compat/phy_drv_compat.h \
 	-include $(PKG_BUILD_DIR)/compat/nbuff_types_stub.h \
 	-include $(PKG_BUILD_DIR)/compat/nbuff_outer_stub.h \
 	-DCONFIG_BCM_ENET -DENET_DT -DCONFIG_BCM_PON=1 \
