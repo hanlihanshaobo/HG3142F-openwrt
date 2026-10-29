@@ -621,3 +621,15 @@ FPM_CTRL 恢复 `0x00100188`、7 个寄存器恢复、三块内存释放。
 - 上设备用 `rdp_c2=1 rdp_c3=15 rdp_c3_ring_base=0x82703000`；关键验收是
   `0x82703000+ring_id*0x10+6` 的大端写指针是否增长。
 
+
+
+## 2026-10-30：C3 mask=15 设备验证（run #92）
+
+- 读回：ring 8/8、BBH_TX 2/2、DSPTCHR 5/5、RNR 6/6、BBH_RX 7/7 全部 OK；
+- lan2 carrier=1；无 Oops/panic（uptime 615→635s）；
+- **ring 写指针 t=1..14s 全 0，未增长**（Q_DEST=0 → 走转发不上送 CPU）；
+- rmmod：BBH_RX→RNR→DSPTCHR→ring→BBH_TX 全部 restore，卸载干净。
+- `.ko` 672,556 B、未决 0。
+
+下一步：Q_DEST/feed-cache 表（推测项，需分支 6）或 C3-b 端口/VLAN。
+
