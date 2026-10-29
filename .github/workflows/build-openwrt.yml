@@ -18,6 +18,11 @@ on:
         type: boolean
         required: false
         default: false
+      enable_enet:
+        description: '把 kmod-bcm-enet（4 个 LAN 口驱动）编进镜像'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -91,6 +96,10 @@ jobs:
         run: |
           cd sources/openwrt
           cp "../../${CONFIG_FILE}" .config
+          if [ "${{ inputs.enable_enet }}" = "true" ]; then
+            echo "CONFIG_PACKAGE_kmod-bcm-enet=m" >> .config
+            echo "==> 本轮把 kmod-bcm-enet 编进镜像"
+          fi
           make defconfig
           echo "=== 关键配置校验 ==="
           for k in CONFIG_TARGET_bcmbca=y CONFIG_TARGET_bcmbca_generic=y \
@@ -241,6 +250,31 @@ jobs:
           grep -nE "error:|fatal error:" probe_full.txt | head -60 || true
           echo "=== error count ==="
           grep -cE "error:|fatal error:" probe_full.txt || true
+
+      - name: Package probe (kmod-bcm-enet)
+        if: always()
+        continue-on-error: true
+        run: |
+          set +e
+          echo "=== package probe: 用仓库里的 bcm-enet 包实际编译一次 ==="
+          cd sources/openwrt
+          # 这个包默认不进镜像（.config 里没有 CONFIG_PACKAGE_kmod-bcm-enet），
+          # 所以在主构建里不会被编译，单拎出来编一次，失败也不影响固件产出。
+          if grep -q 'CONFIG_PACKAGE_kmod-bcm-enet' .config; then
+            echo "(本轮 .config 已选中该包)"
+          else
+            echo "(本轮 .config 未选中该包，仅做编译验证)"
+          fi
+          make package/bcm-enet/compile V=s > ../../pkg_enet.log 2>&1
+          echo "rc=$?"
+          echo "=== error lines ==="
+          grep -nE "error:|fatal error:|Error [0-9]+" ../../pkg_enet.log | head -60 || true
+          echo "=== error count ==="
+          grep -cE "error:|fatal error:" ../../pkg_enet.log || true
+          echo "=== tail 40 ==="
+          tail -40 ../../pkg_enet.log || true
+          echo "=== 产出的 .ko / 模块清单 ==="
+          ls -l build_dir/target-*/linux-*/bcm-enet*/bcm_enet.ko 2>/dev/null || echo "没有 .ko"
 
       - name: SDK compile probe (bcm_pcie)
         if: always()
