@@ -55,7 +55,10 @@ define Build/Prepare
 	$(CP) $(SDK_DIR)/sdk/kernel/bcmkernel/include/linux/nbuff.h $(PKG_BUILD_DIR)/shim/linux/nbuff.h
 	sed -i '/__BUILD_NBUFF_\(SET\|GET\)_ACCESSOR(.*queue/d' $(PKG_BUILD_DIR)/shim/linux/nbuff.h
 	# 6.18 已移除 struct switchdev_ops → 关掉厂商的 switchdev 段
-	sed -i 's/#if defined(CONFIG_NET_SWITCHDEV)/#if 0/' $(PKG_BUILD_DIR)/enet.c $(PKG_BUILD_DIR)/port.h
+	# g9991.c 也要处理：它的 port_ops 初始化里有 .switchdev_ops 指定初始化，
+	# 只改 port.h 不改这里会报 "port_ops_t has no member named switchdev_ops"
+	sed -i 's/#if defined(CONFIG_NET_SWITCHDEV)/#if 0/' \
+		$(PKG_BUILD_DIR)/enet.c $(PKG_BUILD_DIR)/port.h $(PKG_BUILD_DIR)/g9991.c
 	printf '%s\n' \
 		'obj-m := bcm_enet.o' \
 		'bcm_enet-y := $(addsuffix .o,$(ENET_OBJS))' \
@@ -85,7 +88,8 @@ ENET_DEFS:= \
 	-include $(PKG_BUILD_DIR)/compat/enet_compat.h \
 	-include $(PKG_BUILD_DIR)/compat/nbuff_types_stub.h \
 	-include $(PKG_BUILD_DIR)/compat/nbuff_outer_stub.h \
-	-DCONFIG_BCM_ENET -DENET_DT -DCONFIG_BCM_PON=1
+	-DCONFIG_BCM_ENET -DENET_DT -DCONFIG_BCM_PON=1 \
+	-DCONFIG_BCM_EXT_SWITCH_TYPE=0
 
 # 厂商代码在 6.18 下的告警很多，全部降级为警告而不是错误（与探针一致）
 # cast-function-type：enet.c:533 把 enetxapi_buf_recycle(struct sk_buff*, uint32_t, uint32_t)
@@ -93,6 +97,7 @@ ENET_DEFS:= \
 # 因为 runner.c 里还有另一处签名不同的同类强转，改 typedef 会按下葫芦浮起瓢。
 ENET_NOWARN:= \
 	-Wno-error=ignored-qualifiers -Wno-error=cpp -Wno-error=cast-function-type \
+	-Wno-error=undef \
 	-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types \
 	-Wno-error=int-conversion -Wno-error=return-mismatch \
 	-Wno-error=unused-function -Wno-error=discarded-qualifiers \

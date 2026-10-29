@@ -233,15 +233,16 @@ jobs:
           # 不能 include bcm_skbuff.h/bcm_netdevice.h（会整体替换 sk_buff/net_device，与 6.18 冲突）
           # 注意：不再改内核头。厂商私有类型统一由 compat/enet_compat.h 打桩。
           # 不再给内核头注入 Broadcom 字段（会破坏 struct 布局）；改用 compat 桩
-          # enet.c 里的 switchdev_ops 段（6.18 无该成员）
-          sed -i 's/#if defined(CONFIG_NET_SWITCHDEV)/#if 0/' "$ENET/enet.c" || true
+          # enet.c 里的 switchdev_ops 段（6.18 无该成员）；g9991.c 的 port_ops
+          # 初始化里也有 .switchdev_ops 指定初始化，必须一起关掉
+          sed -i 's/#if defined(CONFIG_NET_SWITCHDEV)/#if 0/' "$ENET/enet.c" "$ENET/g9991.c" || true
           # 6.18 的 sk_buff 无 recycle_flags（Broadcom patch 成员），探针阶段注释掉
           sed -i 's|skb->recycle_flags &= SKB_NO_RECYCLE;|/* compat: no recycle_flags in 6.18 */|' "$ENET/enet.c" || true
           sed -i 's#skb->recycle_flags |= rx_info->extra_skb_flags;#/* compat */#' "$ENET/enet.c" || true
           export STAGING_DIR="$TOP/sources/openwrt/staging_dir"
           # -k：遇错不停，一轮把 enet/port/runner/... 所有文件的错误全暴露出来
           make -k -C "$KDIR" M="$PROBE" ARCH=arm CROSS_COMPILE="$CROSS" \
-               KCFLAGS="$INC -include $COMPAT/enet_compat.h -include $COMPAT/nbuff_types_stub.h -include $COMPAT/nbuff_outer_stub.h -DCONFIG_BCM_ENET -DENET_DT -DCONFIG_BCM_PON=1 -Wno-error=ignored-qualifiers -Wno-error=cpp -Wno-error=cast-function-type -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=return-mismatch -Wno-error=unused-function -Wno-error=discarded-qualifiers -Wno-error=missing-prototypes -Wno-error=old-style-declaration -Wno-error=unused-variable -Wno-error=override-init -Wno-error=address" \
+               KCFLAGS="$INC -include $COMPAT/enet_compat.h -include $COMPAT/nbuff_types_stub.h -include $COMPAT/nbuff_outer_stub.h -DCONFIG_BCM_ENET -DENET_DT -DCONFIG_BCM_PON=1 -DCONFIG_BCM_EXT_SWITCH_TYPE=0 -Wno-error=ignored-qualifiers -Wno-error=cpp -Wno-error=cast-function-type -Wno-error=undef -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=return-mismatch -Wno-error=unused-function -Wno-error=discarded-qualifiers -Wno-error=missing-prototypes -Wno-error=old-style-declaration -Wno-error=unused-variable -Wno-error=override-init -Wno-error=address" \
                modules >probe_full.txt 2>&1
           RC=$?
           echo "probe rc=$RC"
@@ -261,12 +262,14 @@ jobs:
           set +e
           echo "=== package probe: 用仓库里的 bcm-enet 包实际编译一次 ==="
           cd sources/openwrt
-          # 这个包默认不进镜像（.config 里没有 CONFIG_PACKAGE_kmod-bcm-enet），
-          # 所以在主构建里不会被编译，单拎出来编一次，失败也不影响固件产出。
-          if grep -q 'CONFIG_PACKAGE_kmod-bcm-enet' .config; then
-            echo "(本轮 .config 已选中该包)"
+          # 这个包默认不进镜像。注意：没被 .config 选中时 `package/xxx/compile`
+          # 是**空操作**（0.03 秒就"成功"，但根本不产生 .ko），所以这里临时打开它。
+          if ! grep -q 'CONFIG_PACKAGE_kmod-bcm-enet' .config; then
+            echo "CONFIG_PACKAGE_kmod-bcm-enet=m" >> .config
+            make defconfig >/dev/null 2>&1
+            echo "(已临时把 kmod-bcm-enet 加进 .config 以便真正编译)"
           else
-            echo "(本轮 .config 未选中该包，仅做编译验证)"
+            echo "(本轮 .config 已选中该包)"
           fi
           make package/bcm-enet/compile V=s > ../../pkg_enet.log 2>&1
           echo "rc=$?"

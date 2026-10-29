@@ -78,4 +78,22 @@ typedef struct {
 	struct { int rdpa_if; } bcm_netdev_to_rdpa_if;
 } bcm_netdev_priv_info_out_t;
 
+/* ---- DSL PHY 的 priv_fun op 号 ----
+ * sw_common.c 的 _ethsw_phy_access() 会调
+ *     phy_priv_fun(phy, PHY_OP_RD_MDIO, ...)
+ * 这两个枚举本来在 phy/phy_drv_dsl_phy.h，但 sw_common.c 里那个 include 被夹在
+ *     #ifdef SF2_DEVICE ... #endif
+ * 里面。我们是 BCM6855（EGPHY），不会定义 SF2_DEVICE，于是枚举拿不到，
+ * 编译报 'PHY_OP_RD_MDIO' undeclared。
+ *
+ * 我们不会走 DSL 路径：EGPHY 的 phy_drv->priv_fun 是 NULL，代码会退到
+ * phy_bus_read/write。所以这里只补两个数值占位。 */
+#if !defined(SF2_DEVICE) && !defined(_PHY_DSL_OP_COMPAT_)
+#define _PHY_DSL_OP_COMPAT_
+enum {
+	PHY_OP_RD_MDIO,
+	PHY_OP_WR_MDIO,
+};
+#endif
+
 #endif /* _BCM_ENET_COMPAT_H_ */
