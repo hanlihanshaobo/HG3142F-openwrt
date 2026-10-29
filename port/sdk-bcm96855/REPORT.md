@@ -404,3 +404,45 @@ carrier=1。
 构建：run #79 成功（571,204 B）、#80 编译失败
 （`MII_PHYSIDR1` 应为 `MII_PHYSID1`）、#81 成功（572,088 B，未决 0）。
 
+
+
+## 2026-10-29：按逆向结果接入真实 unimac MAC 初始化（run #82）
+
+依据 `docs/REVERSE-ENET.md` 路线 B（§9.2）：只做 MAC + PHY，不动数据面。
+
+实现（commit 719d5d4）：
+- `compat/unimac_mac.c` 从 0 寄存器占位改成真实读写：
+  · ioremap 实例 `0x828a8000 + 0x1000*n` 与 MISC `0x828b0000 + 0x400*n`（§3.1）
+  · init = CMD `0x008000d8 | bit24`（接交换机）、FRM_LEN=`0xffff`、
+    RXERR_MASK|=bit5、清 bit22 解速率锁、TX_IPG[13:8]=0x40（§4.2/§4.3）
+  · enable/disable 用 CMD bit0/1（§4.3、§8 item7）
+  · cfg_set = set_speed/set_duplex（bit13 sw_reset 包夹 + IPG 表，§4.4）
+  · pause_set = CMD[18:17]/[8]/[28] + MISC+0x08 + 0x330 + pause SA（§4.6/§4.7）
+  · mtu_set = FRM_LEN/MIB_MAX_PKT；eee_set = 0x64 bit3
+  · `mac_dev_del` 先调 `.dev_del`（iounmap）再 kfree
+- 数据面仍 fail-closed：unimac 无 DMA/中断（§5.1/§6），TX/RX 走原厂路径
+  最终由 RDPA 桩丢弃。
+
+设备结果（同一个启动会话，run #82，`.ko` 586,000 B、未决 0）：
+
+```
+unimac-compat: mac 0 mapped 0x828a8000/0x828b0000
+...
+unimac-compat: mac 5 mapped 0x828ad000/0x828b1400
+unimac-compat: mac 0 rev=0x00000100 cmd=0x018000d8 (base=0x828a8000)
+...
+unimac-compat: mac 5 rev=0x00000100 cmd=0x018000d8 (base=0x828ad000)
+bcm-phy: port_0:0 mdio=0 id=ae02:5371 bmsr=79c9 bmcr=1940
+```
+
+- `rev=0x100` 非 0/全 F → MAC 块已上电可访问（§4.9 的复位前提成立）。
+- `cmd=0x018000d8` = §4.2 的 `0x008000d8 | (1<<24)`，读回与写入一致。
+- 5 个实例全部初始化；`lan0 up` → `<NO-CARRIER,...,UP>`，BMSR bit2=0
+  （未插网线），carrier=0；无 panic，rmmod 干净。
+- 遗留：`enet_dev_mac_set(p,0)` 的 memset 仍会触发 rmmod 时 5 条
+  dev_addr WARN（cosmetic，修法见上一节）。
+
+下一步（仍属路线 B）：插 LAN1 网线复测 carrier=1 + BMSR bit2=1，
+再把 set_speed/set_duplex 的 reset 时序按 §4.4 伪 C 复核一遍
+（当前用 §4.10 参考实现：置 reset → 写速率 → 清 reset）。
+
