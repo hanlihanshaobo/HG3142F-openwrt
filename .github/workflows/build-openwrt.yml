@@ -212,7 +212,7 @@ jobs:
           rm -rf "$PROBE"; mkdir -p "$PROBE"
           printf '%s\n' \
             'obj-m := bcm_enet.o' \
-            'bcm_enet-y := enet.o port.o runner.o dt_parsing.o g9991.o mux_index.o phy_drv_pon.o sw_common.o port_types.o phy_drv_compat.o enet_stubs.o enet_framework_stubs.o bcm_chip_arch_compat.o' \
+            'bcm_enet-y := enet.o port.o runner.o dt_parsing.o g9991.o mux_index.o phy_drv_pon.o sw_common.o port_types.o phy_drv_compat.o enet_stubs.o enet_framework_stubs.o bcm_chip_arch_compat.o bcmkernel_stubs.o' \
             > "$PROBE/Kbuild"
           for f in enet port runner dt_parsing g9991 mux_index phy_drv_pon sw_common port_types; do
             ln -sf "$ENET/$f.c" "$PROBE/$f.c"
@@ -222,6 +222,7 @@ jobs:
           ln -sf "$COMPAT/enet_stubs.c" "$PROBE/enet_stubs.c"
           ln -sf "$COMPAT/enet_framework_stubs.c" "$PROBE/enet_framework_stubs.c"
           ln -sf "$COMPAT/bcm_chip_arch_compat.c" "$PROBE/bcm_chip_arch_compat.c"
+          ln -sf "$COMPAT/bcmkernel_stubs.c" "$PROBE/bcmkernel_stubs.c"
           GCC=$(find "$TOP/sources/openwrt/staging_dir" -path '*toolchain-*/bin/*-gcc' 2>/dev/null | head -1)
           if [ -z "$GCC" ]; then echo "cross gcc not found, skip"; exit 0; fi
           export PATH="$(dirname "$GCC"):$PATH"
@@ -241,6 +242,13 @@ jobs:
           # dt_parsing.c 里 #include "drivers/bcm_chip_arch.c" 是厂商生成文件，GPL 包没带；
           # 换成 compat/bcm_chip_arch_compat.c 提供的同名数组（该文件单独编进模块）
           sed -i 's|#include "drivers/bcm_chip_arch.c"|#include <bcm_chip_arch.h>|' "$ENET/dt_parsing.c" || true
+          # 6.18 的 of_platform.h 不再顺带 include platform_device.h，
+          # dt_parsing.c 用了 struct platform_device/platform_driver -> 显式补上
+          sed -i 's|#include <linux/of_platform.h>|#include <linux/of_platform.h>\n#include <linux/platform_device.h>|' "$ENET/dt_parsing.c" || true
+          # runner.c 的 struct ethswctl_data 来自 <bcm/bcmswapitypes.h>，而 runner.h
+          # 只在 CONFIG_BCM96855 等芯片宏下才 include 它；我们暂不定义芯片宏
+          # （会额外打开 6855 专属代码），先在这里显式补 include
+          sed -i 's|#include <net_port.h>|#include <net_port.h>\n#include <bcm/bcmswapitypes.h>|' "$ENET/runner.c" || true
           # autogen 的 rdpa_ag_iptv.h 未 include rdpa_mcast.h，导致 rdpa_fc_mcast_flow_t 未定义；探针阶段替换为 key_t
           sed -i 's/rdpa_fc_mcast_flow_t/rdpa_fc_mcast_flow_key_t/g' "$SDK/rdp/drivers/rdpa_gpl/include/autogen/rdpa_ag_iptv.h" || true
           # 不能 include bcm_skbuff.h/bcm_netdevice.h（会整体替换 sk_buff/net_device，与 6.18 冲突）

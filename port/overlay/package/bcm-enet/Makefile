@@ -47,7 +47,7 @@ BDMF_DIR:=$(SDK_DIR)/sdk/bcmdrivers/opensource/char/bdmf/impl1
 # enet_framework_stubs.o 补 mac_drivers_set/init、mac_dev_dt_probe（unimac 源码缺失）
 # bcm_chip_arch_compat.o 补厂商生成文件 drivers/bcm_chip_arch.c（GPL 包没带）
 ENET_OBJS:=enet port runner dt_parsing g9991 mux_index phy_drv_pon sw_common port_types \
-           phy_drv_compat enet_stubs enet_framework_stubs bcm_chip_arch_compat
+           phy_drv_compat enet_stubs enet_framework_stubs bcm_chip_arch_compat bcmkernel_stubs
 
 define Build/Prepare
 	$(INSTALL_DIR) $(PKG_BUILD_DIR)/compat $(PKG_BUILD_DIR)/shim/linux
@@ -57,6 +57,7 @@ define Build/Prepare
 	$(CP) $(COMPAT_SRC)/enet_stubs.c $(PKG_BUILD_DIR)/
 	$(CP) $(COMPAT_SRC)/enet_framework_stubs.c $(PKG_BUILD_DIR)/
 	$(CP) $(COMPAT_SRC)/bcm_chip_arch_compat.c $(PKG_BUILD_DIR)/
+	$(CP) $(COMPAT_SRC)/bcmkernel_stubs.c $(PKG_BUILD_DIR)/
 	# 6.18 的 sk_buff 没有厂商补丁加的 queue 成员 → 屏蔽 nbuff.h 里对应 accessor
 	$(CP) $(SDK_DIR)/sdk/kernel/bcmkernel/include/linux/nbuff.h $(PKG_BUILD_DIR)/shim/linux/nbuff.h
 	sed -i '/__BUILD_NBUFF_\(SET\|GET\)_ACCESSOR(.*queue/d' $(PKG_BUILD_DIR)/shim/linux/nbuff.h
@@ -71,6 +72,10 @@ define Build/Prepare
 	# dt_parsing.c 会 #include "drivers/bcm_chip_arch.c"（厂商生成文件，GPL 包缺失）
 	# 换成仓库里的 compat 数据文件（已作为独立 .o 编进模块）
 	sed -i 's|#include "drivers/bcm_chip_arch.c"|#include <bcm_chip_arch.h>|' $(PKG_BUILD_DIR)/dt_parsing.c
+	# 6.18 的 of_platform.h 不再顺带 include platform_device.h
+	sed -i 's|#include <linux/of_platform.h>|#include <linux/of_platform.h>\n#include <linux/platform_device.h>|' $(PKG_BUILD_DIR)/dt_parsing.c
+	# runner.c 的 struct ethswctl_data 在 <bcm/bcmswapitypes.h>，runner.h 只在芯片宏下 include
+	sed -i 's|#include <net_port.h>|#include <net_port.h>\n#include <bcm/bcmswapitypes.h>|' $(PKG_BUILD_DIR)/runner.c
 	# 6.18 的 sk_buff 无 recycle_flags（Broadcom patch 成员）
 	sed -i 's|skb->recycle_flags &= SKB_NO_RECYCLE;|/* compat: no recycle_flags in 6.18 */|' $(PKG_BUILD_DIR)/enet.c
 	sed -i 's#skb->recycle_flags |= rx_info->extra_skb_flags;#/* compat */#' $(PKG_BUILD_DIR)/enet.c

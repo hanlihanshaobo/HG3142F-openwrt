@@ -50,3 +50,26 @@
 - **源码可得性：已解决**（171 文件在手，路径全部明确）
 - **可编译性：待验证**（缺 rdp/bdmf 框架，且需 6.18 内核适配）
 - **license 风险**：`bcm_enet`（opensource 目录）可用；`bcm_bp3drv`（RSA 绑定）若运行必需则是硬障碍——需实测确认是否可绕过
+
+## 八、编译探针进展（2026-10-29，run 51→55）
+
+| run | sha | 结果 |
+|---|---|---|
+| #51 | `d5bfecd` | 8 error（switchdev / PHY_OP_* / EXT_SWITCH_TYPE） |
+| #52 | `db0b6aa` | 继续暴露更深层错误 |
+| #53 | `aef2f4e` | 仍停在编译，无链接（此前"15 个 undefined"记录有误） |
+| #54 | `643104a` | 3 个真实阻塞：runner_common switchdev 原型 / `<stdarg.h>` / `drivers/bcm_chip_arch.c` |
+| #55 | `a6498a6` | 13 个 .o 中 11 个编过；仅 `runner.o`（`struct ethswctl_data` 未定义）与 `dt_parsing.o`（6.18 的 `of_platform.h` 不再带 `platform_device.h`）失败；**仍无 .ko** |
+
+run #55 追加结论：
+- 我们新加的 `phy_drv_compat.o` / `enet_framework_stubs.o` / `bcm_chip_arch_compat.o` 全部编译通过；
+- 未定义符号清单要等首次链接成功才有（modpost 在编译全过之后才跑）；
+- prebuilt `phy_drv.o`/`phy_drv_brcm.o`/`mac_drv_unimac.o`/`unimac_drv_impl1.o` 均为 **aarch64**，armv7 不可用 → unimac MAC 驱动必须自写或换 32 位源码来源。
+
+对应修复（本次提交）：
+1. `dt_parsing.c` 显式 `#include <linux/platform_device.h>`；
+2. `runner.c` 显式 `#include <bcm/bcmswapitypes.h>`（`struct ethswctl_data` 的来源；
+   `runner.h` 只在 `CONFIG_BCM96855` 等芯片宏下 include 它）；
+3. 新增 `compat/bcmkernel_stubs.c`：`kerSysGetMacAddress`（本地管理 MAC 占位）、
+   `kerSysReleaseMacAddress`、DyingGasp 注册/注销（no-op）。
+
