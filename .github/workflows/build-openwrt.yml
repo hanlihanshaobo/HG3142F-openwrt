@@ -259,9 +259,17 @@ jobs:
           KO=$(find build_dir -path '*bcm-enet*/bcm_enet.ko' -type f 2>/dev/null | head -1)
           OBJ=$(find build_dir -path '*bcm-enet*/bcm_enet.o' -type f 2>/dev/null | head -1)
           NM=$(find "$PWD/staging_dir" -path '*toolchain-*/bin/*-nm' 2>/dev/null | head -1)
-          if [ -n "$NM" ]; then
-            if [ -n "$KO" ]; then "$NM" -u "$KO" | sort -u > ../../out/undefined_symbols.txt || true
-            elif [ -n "$OBJ" ]; then "$NM" -u "$OBJ" | sort -u > ../../out/undefined_symbols.txt || true; fi
+          SYMV=$(find build_dir -maxdepth 6 -name Module.symvers -path '*linux-6.18*' 2>/dev/null | head -1)
+          if [ -n "$NM" ] && { [ -n "$KO" ] || [ -n "$OBJ" ]; }; then
+            TARGET=${KO:-$OBJ}
+            "$NM" -u "$TARGET" | awk '{print $NF}' | sort -u > ../../out/undefined_symbols_raw.txt || true
+            if [ -n "$SYMV" ]; then
+              # 只保留「内核没有导出」的符号 —— 就是 insmod 会被拒的那批
+              awk '{print $2}' "$SYMV" | sort -u > /tmp/kernel_exports.txt
+              comm -23 ../../out/undefined_symbols_raw.txt /tmp/kernel_exports.txt > ../../out/undefined_symbols.txt || true
+            else
+              cp ../../out/undefined_symbols_raw.txt ../../out/undefined_symbols.txt || true
+            fi
           fi
           if [ -s ../../out/undefined_symbols.txt ]; then
             echo "::warning::未决符号 $(wc -l < ../../out/undefined_symbols.txt) 个（模块无法 insmod）"
