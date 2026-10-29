@@ -353,7 +353,7 @@ jobs:
           export STAGING_DIR="$TOP/sources/openwrt/staging_dir"
           # -k：遇错不停，一轮把 enet/port/runner/... 所有文件的错误全暴露出来
           make -k -C "$KDIR" M="$PROBE" ARCH=arm CROSS_COMPILE="$CROSS" \
-               KCFLAGS="$INC -include $COMPAT/enet_compat.h -include $COMPAT/phy_drv_compat.h -include $COMPAT/nbuff_types_stub.h -include $COMPAT/nbuff_outer_stub.h -DCONFIG_BCM_ENET -DENET_DT -DCONFIG_BCM_PON=1 -DCONFIG_BCM_EXT_SWITCH_TYPE=0 -Wno-error=ignored-qualifiers -Wno-error=cpp -Wno-error=cast-function-type -Wno-error=undef -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=return-mismatch -Wno-error=unused-function -Wno-error=discarded-qualifiers -Wno-error=missing-prototypes -Wno-error=old-style-declaration -Wno-error=unused-variable -Wno-error=override-init -Wno-error=address -Wno-error=vla-larger-than -Wno-error=vla" \
+               KCFLAGS="$INC -include $COMPAT/enet_compat.h -include $COMPAT/phy_drv_compat.h -include $COMPAT/nbuff_types_stub.h -include $COMPAT/nbuff_outer_stub.h -DCONFIG_BCM_ENET -DENET_DT -DCONFIG_BCM_PON=1 -DCONFIG_BCM_EXT_SWITCH_TYPE=0 -Wno-error=ignored-qualifiers -Wno-error=cpp -Wno-error=cast-function-type -Wno-error=undef -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=return-mismatch -Wno-error=unused-function -Wno-error=discarded-qualifiers -Wno-error=missing-prototypes -Wno-error=old-style-declaration -Wno-error=unused-variable -Wno-error=override-init -Wno-error=address -Wno-vla-larger-than -Wno-error=vla" \
                modules >probe_full.txt 2>&1
           RC=$?
           echo "probe rc=$RC"
