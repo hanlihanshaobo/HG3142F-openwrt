@@ -369,7 +369,8 @@ void phy_dev_link_change_unregister(phy_dev_t *phy_dev)
 	cd->cb_ctx = NULL;
 	phy_dev->link_change_cb = NULL;
 	phy_dev->link_change_ctx = NULL;
-	cancel_delayed_work_sync(&cd->poll);
+	if (cd->poll.work.func)
+		cancel_delayed_work_sync(&cd->poll);
 
 	if (phy_dev->phy_drv && phy_dev->phy_drv->link_change_unregister)
 		phy_dev->phy_drv->link_change_unregister(phy_dev);
@@ -588,8 +589,11 @@ int phy_dev_del(phy_dev_t *phy_dev)
 		return -ENOENT;
 
 	cd->polling = 0;
-	cancel_delayed_work_sync(&cd->poll);
-	cancel_work_sync(&cd->work);
+	/* 从未 INIT_WORK 过的 work 直接 cancel 会触发 __flush_work 的 WARN */
+	if (cd->poll.work.func)
+		cancel_delayed_work_sync(&cd->poll);
+	if (cd->work.func)
+		cancel_work_sync(&cd->work);
 	kfree(cd);
 	kfree(phy_dev);
 	return 0;
@@ -783,8 +787,10 @@ void phy_drv_compat_exit(void)
 	mutex_unlock(&compat_lock);
 
 	list_for_each_entry_safe(cd, tmp, &dead, node) {
-		cancel_delayed_work_sync(&cd->poll);
-		cancel_work_sync(&cd->work);
+		if (cd->poll.work.func)
+			cancel_delayed_work_sync(&cd->poll);
+		if (cd->work.func)
+			cancel_work_sync(&cd->work);
 		list_del(&cd->node);
 		kfree(cd->phy);
 		kfree(cd);

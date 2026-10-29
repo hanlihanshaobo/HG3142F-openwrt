@@ -237,6 +237,48 @@ undefined_symbols_raw  96 行  ← 全是 vmlinux 导出（kmalloc/printk/of_* �
 - **下一步**：用串口抓 run #72 .ko 的 panic 栈，定位是 sw_init 的端口遍历
   还是 port_init 的 netdev 注册；再决定补 ops 表字段还是继续 fail-closed。
 
+### run #72 panic 定位与修复（同日 20:50）
+
+串口日志 `test_images/insmod_panic_20261029_205022.log`：
+
+```
+Unable to handle kernel NULL pointer dereference at virtual address 00000000 when execute
+PC is at 0x0
+LR is at port_type_resolve+0x3c/0xbc [bcm_enet]
+Call trace:
+ port_type_resolve <- port_create+0xe8/0x188
+ port_create <- of_port_probe+0x108/0x644
+ of_port_probe <- of_sw_probe+0x108/0x1b0
+ of_sw_probe <- enet_probe+0x38/0xac
+ enet_probe <- platform_probe
+ driver_register <- init_module
+```
+
+定位到 `port.c:646`：`parent_sw->s.ops->port_id_on_sw(...)` 为空 ——
+run #72 的最小 `sw_ops_t` 只填了 `.init`。
+
+修复（commit `fa3e97a`）：补 `runner_sw_port_id_on_sw()`，
+`*port_id = port_info->port; *port_type = PORT_TYPE_RUNNER_PORT;`。
+
+**run #73 结果（里程碑）**：`.ko` 543,364 B、未决 0；insmod 后：
+
+```
+bcmenet DT
+bcm-phy: EGPHY addr 1 from /mdio/ethernet-phy@1
+bcm_enet: no MAC driver for port 0 (/switch0/ports/port@0), unimac source missing
+of_port_probe:L280 Failed to create mac for port 0
+of_bcmenet switch0: probe with driver of_bcmenet failed with error -22
+```
+
+**probe 走到了端口 0 的 MAC 创建**（PHY 框架、DT 解析、switch 创建全部正常），
+干净失败无 panic，与预期停点完全一致。`rmmod` 成功，但 `phy_dev_del()`
+对从未 INIT_WORK 的 work 调 cancel，触发两条 `__flush_work` WARN；
+已加 `work.func` 判空（待下一轮验证）。
+
+- DTS appended-DTB 的坑与检查清单：`port/docs/DTB-APPENDED-NOTE.md`
+- 下一步：自写最小 unimac MAC 驱动（或找 32 位源码），替换
+  `mac_dev_dt_probe` 的 fail-closed 桩，才能真正建出 lan0..lan4 netdev。
+
 
 
 
