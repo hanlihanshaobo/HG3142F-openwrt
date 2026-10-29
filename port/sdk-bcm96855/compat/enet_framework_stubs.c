@@ -29,6 +29,7 @@
 
 extern void rdp_probe_run(void);
 extern void rdp_c2_run(void);
+extern void rdp_c3_run(void);
 
 int mac_drivers_set(void)
 {
@@ -39,6 +40,9 @@ int mac_drivers_set(void)
 
 	/* C2-a：只在 insmod 带 rdp_c2=1 时执行（FPM/QM 子集，写后立即读回） */
 	rdp_c2_run();
+
+	/* C3 骨架：默认 rdp_c3=0，只有显式置位才执行 */
+	rdp_c3_run();
 
 	rc = phy_drv_compat_init();
 
