@@ -47,7 +47,8 @@ BDMF_DIR:=$(SDK_DIR)/sdk/bcmdrivers/opensource/char/bdmf/impl1
 # enet_framework_stubs.o 补 mac_drivers_set/init、mac_dev_dt_probe（unimac 源码缺失）
 # bcm_chip_arch_compat.o 补厂商生成文件 drivers/bcm_chip_arch.c（GPL 包没带）
 ENET_OBJS:=enet port runner dt_parsing g9991 mux_index phy_drv_pon sw_common port_types \
-           phy_drv_compat enet_stubs enet_framework_stubs bcm_chip_arch_compat bcmkernel_stubs
+           phy_drv_compat enet_stubs enet_framework_stubs bcm_chip_arch_compat bcmkernel_stubs \
+           enet_symbol_stubs
 
 define Build/Prepare
 	$(INSTALL_DIR) $(PKG_BUILD_DIR)/compat $(PKG_BUILD_DIR)/shim/linux
@@ -58,6 +59,7 @@ define Build/Prepare
 	$(CP) $(COMPAT_SRC)/enet_framework_stubs.c $(PKG_BUILD_DIR)/
 	$(CP) $(COMPAT_SRC)/bcm_chip_arch_compat.c $(PKG_BUILD_DIR)/
 	$(CP) $(COMPAT_SRC)/bcmkernel_stubs.c $(PKG_BUILD_DIR)/
+	$(CP) $(COMPAT_SRC)/enet_symbol_stubs.c $(PKG_BUILD_DIR)/
 	# 6.18 的 sk_buff 没有厂商补丁加的 queue 成员 → 屏蔽 nbuff.h 里对应 accessor
 	$(CP) $(SDK_DIR)/sdk/kernel/bcmkernel/include/linux/nbuff.h $(PKG_BUILD_DIR)/shim/linux/nbuff.h
 	sed -i '/__BUILD_NBUFF_\(SET\|GET\)_ACCESSOR(.*queue/d' $(PKG_BUILD_DIR)/shim/linux/nbuff.h
