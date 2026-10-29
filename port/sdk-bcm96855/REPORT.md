@@ -510,3 +510,35 @@ lan2 carrier=1 / operstate=up
 
 产出：`docs/C-PLAN.md`（C1 表 + C2~C4 分阶段计划，含串口前置条件）。
 
+
+
+## 2026-10-30：C2-a —— FPM 池 + QM 全局配置写读回（run #86/#87）
+
+实现 `compat/rdp_c2.c`（`rdp_c2=1`，默认关）：256 KiB `alloc_pages_exact`
+池；写 QM+0x034/0x038（FPM base/coherent）、0x03c（DDR_SOP=0|88<<16）、
+0x280/0x284/0x288（UG0 阈值 64/96/112）、0x200（POOLS_THR0=64）。
+每次写后读回，不一致立即恢复并停止；rmmod 经 `phy_drv_compat_exit()`
+恢复全部寄存器并释放池；不写 QM_ENABLE/FPM_CTRL，不建 ring。
+
+**run #86**：前 3 个 OK，`0x200` 写 0x80 读回 0 -> 停止。根因：该寄存器
+是 7 bit 字段（AG getter 掩 0x7f、setter 校验最高位），128 越界。
+
+**run #87**（`.ko` 625,808 B、未决 0）：7/7 写读回一致：
+
+```
+FPM_BASE     0x034 old=0x03580000 wrote=0x03600000 OK
+FPM_COHERENT 0x038 old=0x03580000 wrote=0x03600000 OK
+DDR_SOP      0x03c old=0x00580000 wrote=0x00580000 OK
+UG0_LOWER    0x280 old=0x0000ff79 wrote=0x00000040 OK
+UG0_MID      0x284 old=0x0000ff79 wrote=0x00000060 OK
+UG0_HIGHER   0x288 old=0x0000ffff wrote=0x00000070 OK
+FPM_POOLS_THR0 0x200 old=0x00000808 wrote=0x00000040 OK
+```
+
+- `lan2` up 后 `carrier=1 / operstate=up`，link 未受影响；
+- `rmmod` 7 个寄存器 restore 成功、池释放；无 Oops、无 panic、uptime 连续。
+- 备注：`old=0x03580000` 是 #86 遗留值（首次失败时 restore 未生效，已修）；
+  重启后回到硬件默认。
+
+**C2-a 通过，可进入 C2-b（FPM 使能 + ring/描述符）。**
+
