@@ -344,3 +344,63 @@ eth0/br-lan/lo。
 + fail-closed 桩，没有真实收发。下一步：DMA 环 + unimac 寄存器初始化 +
 中断，再接 runner/RDPA 收发。
 
+
+
+## 2026-10-29：Spike A/B（link-up 可行性 + 交换机初始化评估）
+
+**Spike A：link-up（成功）**
+
+实现（commit c83fa06 / 2b8ee64 / eb98e06）：
+- `compat/phy_drv_compat.c`：新增 MDIO_V1 C22 总线。base 从 DTS
+  `brcm,mdio1`（0xff802060）解析，CMD/CFG 布局取自 SDK
+  `mdio_drv_common.c`；cfg 只置 clause-22 + free-run，分频保留
+  bootloader 的值。
+- `port_runner_port` 增加 `.open/.stop`：`ndo_open` 时立刻读一次 PHY
+  并触发 `phy_link_change_cb`（负责 `netif_carrier_on/off`），之后由
+  200ms 轮询继续跟踪。
+- `enet_set_mac_addr()` 改用 `eth_hw_addr_set()`，消掉 open 时
+  6.18 的 `Incorrect netdev->dev_addr` WARN。
+
+设备结果（run #79 / #81，同一启动会话）：
+
+```
+bcm-phy: MDIO_V1 at 0xff802060 cfg=0x000020c1, C22 polling
+bcm-phy: port_0:0 mdio=0 id=ae02:5371 bmsr=79c9 bmcr=1940   (port 0..3 相同)
+bcm-phy: port_0:5 mdio=0 id=0143:bff0 bmsr=0109 bmcr=0940   (SGMII)
+```
+
+- PHY ID `ae02:5371`（Broadcom OUI）可读 → **MDIO C22 读写通路成立**。
+- BMSR=0x79c9 → bit2(link)=0；5 个口都没有插网线。
+- `ip link set lan0 up` → `<NO-CARRIER,BROADCAST,MULTICAST,UP>`，
+  carrier=0 / operstate=down（5 口一致），与 link 位一致。
+- 无 panic；rmmod 干净。
+
+遗留（纯 cosmetic，未再上设备）：`enet_dev_mac_set(p, 0)` 里
+`memset(dev->dev_addr, 0, ETH_ALEN)` 绕过 addr_shadow，rmmod 时
+`free_netdev()` 会报 5 条 `Incorrect netdev->dev_addr`。改成
+`eth_hw_addr_set(dev, zero_addr)` 即可。
+
+复测方法：插 LAN1 网线 → `ip link set lan1 up`，预期 `bmsr` bit2=1、
+carrier=1。
+
+**Spike B：交换机最小初始化 —— 不可做（时间盒内）**
+
+证据：
+- `runner.c`：354 处 `rdpa_*`、119 处 `bdmf_*`、**0 处直接寄存器访问**。
+- `port_runner_sw_init()` 只是
+  `create_rdpa_port(rdpa_if_switch, ...)` → `bdmf_new_and_set()`；
+  端口 SAL/DAL、miss action、egress TM、VLAN/转发全由闭源 rdpa 按
+  BDMF 属性配置。
+- 整个 GPL 包里没有 RDP 寄存器定义（搜 `RDP_*` 只有 `RDPA_*` 宏）。
+- `sf2.c` / `sw_common.c` 是**外部 SF2 交换机**路径
+  （`#ifdef SF2_DEVICE`，`SF2SW_RREG/WREG = extsw_rreg_wrap`），
+  与内部 Runner 无关，本 build 也未编译。
+- 结论：要做 dumb-switch 必须自己写 RDP 的 port-map / VLAN / ARL /
+  IMP 寄存器序列，无文档、无头文件，估计 ≥ 数周逆向且高风险，
+  不是 3 轮 module-only 能覆盖的。
+- 建议：数据面停在 netdev 里程碑；现实路径只有拿到 RDPA/RDP 源码，
+  或与当前内核匹配的 armv7 `rdpa.ko`（目前都没有）。
+
+构建：run #79 成功（571,204 B）、#80 编译失败
+（`MII_PHYSIDR1` 应为 `MII_PHYSID1`）、#81 成功（572,088 B，未决 0）。
+
