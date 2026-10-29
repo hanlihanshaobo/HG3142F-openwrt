@@ -308,6 +308,17 @@ jobs:
             ls -l "$KDIR/scripts/dtc" 2>&1 | head -10 || true
           fi
           cp ../../dtb_build.log ../../out/dtb_build.log 2>/dev/null || true
+          # 同时导出内核树里未追加 DTB 的 zImage：
+          # OpenWrt 的 append-dtb 只改镜像副本，arch/arm/boot/zImage 本身是干净的。
+          # 厂商 U-Boot 引导 zImage 时，压缩内核会优先用自带的 appended DTB，
+          # 导致 FIT 里的 fdt 被忽略 —— 必须用这个裸 zImage。
+          ZIMG="$KDIR/arch/arm/boot/zImage"
+          if [ -f "$ZIMG" ]; then
+            cp -v "$ZIMG" ../../out/zImage-nodtb
+            echo "zImage-nodtb: $(stat -c%s ../../out/zImage-nodtb) 字节"
+          else
+            echo "::warning::没找到 $ZIMG"
+          fi
           echo "dtb_build $(date +%s)" >> "$GITHUB_WORKSPACE/timing.marks"
 
 
