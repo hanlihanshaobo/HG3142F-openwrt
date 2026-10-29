@@ -11,8 +11,10 @@
  *   rdp_c3=0   关闭
  *   bit0 (1)   写 8 项 CPU ring 表（16 B/项，物理地址大端），逐字节回读
  *   bit1 (2)   BBH_TX 每端口配置（EEE + DFIFOCTRL），本轮不使用
- *   bit2 (4)   DSPTCHR credit（值未还原，拒绝执行）
- *   bit3 (8)   RNR 端口使能/学习（表未还原，拒绝执行）
+ *   bit2 (4)   DSPTCHR credit：0x82880000+0x300+4*v，RMW 清 bit[31:20]
+ *              （credit=0，保留低 20 位阈值），v=0..rdp_c3_dsp_ports-1
+ *   bit3 (8)   RNR 全局 enable（0x82800000+0x1000*core bit0=1，RMW）
+ *              + BBH_RX 端口（0x82898000+0x400*p：+0x04/+0x30/+0x34/+0x3c）
  *   bit4 (16)  只读探测（0x82700000/0x82703000/0x82702f00/... ），读完即返回
  *
  * 占位参数：
@@ -53,6 +55,18 @@ static uint rdp_c3_port;
 module_param_named(rdp_c3_port, rdp_c3_port, uint, 0444);
 MODULE_PARM_DESC(rdp_c3_port, "BBH_TX instance / port (0..2)");
 
+static uint rdp_c3_dsp_ports = 5;
+module_param_named(rdp_c3_dsp_ports, rdp_c3_dsp_ports, uint, 0444);
+MODULE_PARM_DESC(rdp_c3_dsp_ports, "DSPTCHR credit entries v=0..n-1 (default 5)");
+
+static uint rdp_c3_rnr_cores = 6;
+module_param_named(rdp_c3_rnr_cores, rdp_c3_rnr_cores, uint, 0444);
+MODULE_PARM_DESC(rdp_c3_rnr_cores, "RNR global enable cores (default 6)");
+
+static uint rdp_c3_rx_ports = 7;
+module_param_named(rdp_c3_rx_ports, rdp_c3_rx_ports, uint, 0444);
+MODULE_PARM_DESC(rdp_c3_rx_ports, "BBH_RX ports p=0..n-1 (default 7)");
+
 #define C3_RING_COUNT		8
 #define C3_RING_ENTRIES		8
 #define C3_RING_ENTRY_SIZE	16
@@ -62,6 +76,23 @@ MODULE_PARM_DESC(rdp_c3_port, "BBH_TX instance / port (0..2)");
 #define C3_PROBE_BIT		16
 #define C3_RING_BIT		1
 #define C3_BBH_BIT		2
+#define C3_DSP_BIT		4
+#define C3_RNR_BIT		8
+
+#define C3_DSPTCHR_BASE		0x82880000u
+#define C3_DSPTCHR_OFF		0x300u
+#define C3_DSP_CREDIT_MASK	0xfff00000u	/* bit[31:20] = credit */
+#define C3_DSP_RMW_KEEP		0x000fffffu	/* 低 20 位阈值必须保留 */
+
+#define C3_RNR_BASE		0x82800000u
+#define C3_RNR_ENABLE		(1u << 0)
+
+#define C3_BBH_RX_BASE		0x82898000u
+#define C3_BBH_RX_STRIDE	0x400u
+#define C3_BBH_RX_VIQ		0x04
+#define C3_BBH_RX_0X30		0x30
+#define C3_BBH_RX_0X34		0x34
+#define C3_BBH_RX_CTRL		0x3c		/* 最后写，bit0/1 使能 */
 
 /* §7.1：BBH_TX 三个实例 */
 #define C3_BBH_TX_BASE(p)	(0x82890000u + 0x2000u * (u32)(p))
@@ -76,6 +107,19 @@ static u32 c3_ring_tbl_save[C3_RING_COUNT][4];
 static int c3_ring_written;
 static u32 c3_bbh_save[2];
 static int c3_bbh_written;
+
+#define C3_DSP_MAX	8
+#define C3_RNR_MAX	6
+#define C3_RX_MAX	7
+
+static u32 c3_dsp_save[C3_DSP_MAX];
+static int c3_dsp_written;
+
+static u32 c3_rnr_save[C3_RNR_MAX];
+static int c3_rnr_written;
+
+static u32 c3_rx_save[C3_RX_MAX][4];
+static int c3_rx_written;
 
 /* ------------------------------------------------------------------ */
 /* 只读探测                                                            */
@@ -296,12 +340,213 @@ static int c3_write_bbh_tx(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* bit2：DSPTCHR credit（RMW，只清 bit[31:20]）                          */
+/* ------------------------------------------------------------------ */
+
+static int c3_write_dsptchr(void)
+{
+	void __iomem *p;
+	u32 v, old, new, rb;
+	int rc = 0;
+
+	if (rdp_c3_dsp_ports > C3_DSP_MAX) {
+		pr_err("C3: dsp_ports %u > %u\n", rdp_c3_dsp_ports, C3_DSP_MAX);
+		return -EINVAL;
+	}
+
+	p = ioremap(C3_DSPTCHR_BASE, 0x1000);
+	if (!p)
+		return -ENOMEM;
+
+	for (v = 0; v < rdp_c3_dsp_ports; v++) {
+		u32 off = C3_DSPTCHR_OFF + 4 * v;
+
+		old = readl(p + off);
+		new = old & C3_DSP_RMW_KEEP;	/* credit=0，保留低 20 位阈值 */
+		c3_dsp_save[v] = old;
+		c3_dsp_written = v + 1;
+
+		writel(new, p + off);
+		rb = readl(p + off);
+		pr_info("C3 DSPTCHR[%u] 0x%03x old=0x%08x wrote=0x%08x readback=0x%08x %s\n",
+			v, off, old, new, rb, (rb == new) ? "OK" : "MISMATCH");
+		if (rb != new) {
+			rc = -EIO;
+			break;
+		}
+	}
+	iounmap(p);
+	return rc;
+}
+
+static void c3_restore_dsptchr(void)
+{
+	void __iomem *p;
+	u32 v;
+
+	if (!c3_dsp_written)
+		return;
+
+	p = ioremap(C3_DSPTCHR_BASE, 0x1000);
+	if (p) {
+		for (v = 0; v < c3_dsp_written; v++)
+			writel(c3_dsp_save[v],
+			       p + C3_DSPTCHR_OFF + 4 * v);
+		iounmap(p);
+	}
+	c3_dsp_written = 0;
+	pr_info("C3: DSPTCHR credits restored\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* bit3a：RNR 全局 enable（每 core RMW bit0）                            */
+/* ------------------------------------------------------------------ */
+
+static int c3_write_rnr(void)
+{
+	void __iomem *p;
+	u32 core, old, new, rb;
+	int rc = 0;
+
+	if (rdp_c3_rnr_cores > C3_RNR_MAX) {
+		pr_err("C3: rnr_cores %u > %u\n", rdp_c3_rnr_cores, C3_RNR_MAX);
+		return -EINVAL;
+	}
+
+	p = ioremap(C3_RNR_BASE, 0x1000 * C3_RNR_MAX);
+	if (!p)
+		return -ENOMEM;
+
+	for (core = 0; core < rdp_c3_rnr_cores; core++) {
+		u32 off = core * 0x1000;
+
+		old = readl(p + off);
+		new = old | C3_RNR_ENABLE;
+		c3_rnr_save[core] = old;
+		c3_rnr_written = core + 1;
+
+		writel(new, p + off);
+		rb = readl(p + off);
+		pr_info("C3 RNR[%u] 0x%05x old=0x%08x wrote=0x%08x readback=0x%08x %s\n",
+			core, off, old, new, rb, (rb == new) ? "OK" : "MISMATCH");
+		if (rb != new) {
+			rc = -EIO;
+			break;
+		}
+	}
+	iounmap(p);
+	return rc;
+}
+
+static void c3_restore_rnr(void)
+{
+	void __iomem *p;
+	u32 core;
+
+	if (!c3_rnr_written)
+		return;
+
+	p = ioremap(C3_RNR_BASE, 0x1000 * C3_RNR_MAX);
+	if (p) {
+		for (core = 0; core < c3_rnr_written; core++)
+			writel(c3_rnr_save[core], p + core * 0x1000);
+		iounmap(p);
+	}
+	c3_rnr_written = 0;
+	pr_info("C3: RNR global enable restored\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* bit3b：BBH_RX 端口（+0x04/+0x30/+0x34，最后 +0x3c 使能）              */
+/* ------------------------------------------------------------------ */
+
+static int c3_write_bbh_rx(void)
+{
+	void __iomem *p;
+	u32 port;
+	int rc = 0;
+
+	if (rdp_c3_rx_ports > C3_RX_MAX) {
+		pr_err("C3: rx_ports %u > %u\n", rdp_c3_rx_ports, C3_RX_MAX);
+		return -EINVAL;
+	}
+
+	p = ioremap(C3_BBH_RX_BASE, C3_BBH_RX_STRIDE * C3_RX_MAX);
+	if (!p)
+		return -ENOMEM;
+
+	for (port = 0; port < rdp_c3_rx_ports; port++) {
+		u32 base = port * C3_BBH_RX_STRIDE;
+		u32 viq = port | (port << 8);
+		u32 r_viq, r_30, r_34, r_ctrl;
+
+		c3_rx_save[port][0] = readl(p + base + C3_BBH_RX_VIQ);
+		c3_rx_save[port][1] = readl(p + base + C3_BBH_RX_0X30);
+		c3_rx_save[port][2] = readl(p + base + C3_BBH_RX_0X34);
+		c3_rx_save[port][3] = readl(p + base + C3_BBH_RX_CTRL);
+		c3_rx_written = port + 1;
+
+		writel(viq, p + base + C3_BBH_RX_VIQ);
+		writel(0x12, p + base + C3_BBH_RX_0X30);
+		writel(0xff, p + base + C3_BBH_RX_0X34);
+		writel(0x3, p + base + C3_BBH_RX_CTRL);	/* 最后写 */
+
+		r_viq = readl(p + base + C3_BBH_RX_VIQ);
+		r_30 = readl(p + base + C3_BBH_RX_0X30);
+		r_34 = readl(p + base + C3_BBH_RX_0X34);
+		r_ctrl = readl(p + base + C3_BBH_RX_CTRL);
+
+		pr_info("C3 BBH_RX[%u] +0x04=0x%08x +0x30=0x%08x +0x34=0x%08x +0x3c=0x%08x %s\n",
+			port, r_viq, r_30, r_34, r_ctrl,
+			(r_viq == viq && r_30 == 0x12 &&
+			 r_34 == 0xff && r_ctrl == 0x3) ? "OK" : "MISMATCH");
+
+		if (r_viq != viq || r_30 != 0x12 ||
+		    r_34 != 0xff || r_ctrl != 0x3) {
+			rc = -EIO;
+			break;
+		}
+	}
+	iounmap(p);
+	return rc;
+}
+
+static void c3_restore_bbh_rx(void)
+{
+	void __iomem *p;
+	u32 port;
+
+	if (!c3_rx_written)
+		return;
+
+	p = ioremap(C3_BBH_RX_BASE, C3_BBH_RX_STRIDE * C3_RX_MAX);
+	if (p) {
+		for (port = 0; port < c3_rx_written; port++) {
+			u32 base = port * C3_BBH_RX_STRIDE;
+
+			/* 先关使能，再恢复其余字段 */
+			writel(c3_rx_save[port][3], p + base + C3_BBH_RX_CTRL);
+			writel(c3_rx_save[port][2], p + base + C3_BBH_RX_0X34);
+			writel(c3_rx_save[port][1], p + base + C3_BBH_RX_0X30);
+			writel(c3_rx_save[port][0], p + base + C3_BBH_RX_VIQ);
+		}
+		iounmap(p);
+	}
+	c3_rx_written = 0;
+	pr_info("C3: BBH_RX ports restored\n");
+}
+
+/* ------------------------------------------------------------------ */
 /* 入口 / 恢复                                                          */
 /* ------------------------------------------------------------------ */
 
 void rdp_c3_restore(void)
 {
 	void __iomem *p;
+
+	c3_restore_bbh_rx();
+	c3_restore_rnr();
+	c3_restore_dsptchr();
 
 	c3_restore_ring_table();
 
@@ -336,26 +581,24 @@ void rdp_c3_run(void)
 	if (rdp_c3 & C3_PROBE_BIT)
 		c3_probe();
 
-	if (rdp_c3 & 4) {
-		pr_err("C3: DSPTCHR credit 值未还原（分支 6 TODO），拒绝执行\n");
-		return;
-	}
-	if (rdp_c3 & 8) {
-		pr_err("C3: RNR 端口表地址未还原（分支 6 TODO），拒绝执行\n");
-		return;
-	}
-
 	if (rdp_c3 & C3_RING_BIT)
 		rc = c3_write_ring_table();
 	if (!rc && (rdp_c3 & C3_BBH_BIT))
 		rc = c3_write_bbh_tx();
+	if (!rc && (rdp_c3 & C3_DSP_BIT))
+		rc = c3_write_dsptchr();
+	if (!rc && (rdp_c3 & C3_RNR_BIT))
+		rc = c3_write_rnr();
+	if (!rc && (rdp_c3 & C3_RNR_BIT))
+		rc = c3_write_bbh_rx();
 
 	if (rc) {
 		pr_err("C3: failed rc=%d, restoring\n", rc);
 		rdp_c3_restore();
 		return;
 	}
-	if (rdp_c3 & (C3_RING_BIT | C3_BBH_BIT))
-		pr_info("C3: done (ring=%d bbh=%d)\n",
-			!!(rdp_c3 & C3_RING_BIT), !!(rdp_c3 & C3_BBH_BIT));
+	if (rdp_c3 & (C3_RING_BIT | C3_BBH_BIT | C3_DSP_BIT | C3_RNR_BIT))
+		pr_info("C3: done (ring=%d bbh_tx=%d dsp=%d rnr/rx=%d)\n",
+			!!(rdp_c3 & C3_RING_BIT), !!(rdp_c3 & C3_BBH_BIT),
+			!!(rdp_c3 & C3_DSP_BIT), !!(rdp_c3 & C3_RNR_BIT));
 }
