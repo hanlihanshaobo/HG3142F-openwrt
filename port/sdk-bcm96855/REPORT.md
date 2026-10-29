@@ -154,5 +154,28 @@ undefined_symbols_raw  96 行  ← 全是 vmlinux 导出（kmalloc/printk/of_* �
 即 **insmod 不会再因 Unknown symbol 被拒**，可以进入设备侧 probe 验证。
 预期 probe 会在第一个 `rdpa_system_get()`/-1 处停下（fail-closed 设计）。
 
+## 十、首次设备 insmod（2026-10-29）
+
+- **基线**：uptime 1497s；唯一网口 `eth0`（RTL8125B，r8169）；`/proc/device-tree`
+  只有 pcie/nand/uart，**没有** switch0/mdio/enet 节点；无 pstore。
+- **第 1 次**（run #64 的 .ko，531,848 B，md5 两端一致）：
+  `insmod` 后设备直接 panic，SSH 断开；看门狗约 70 秒重启，重连成功
+  （uptime 92s），`lsmod` 已无 bcm_enet，eth0 正常。无 pstore 可取证。
+- **根因**：`enet.c:has_dt()` 找不到 `brcm,enet` 节点返回 0 →
+  `bcm_enet_init()` 走 `!has_dt()` 分支直接 `bcm_enet_init_post()`；
+  此时 DT 解析没跑，`root_sw` 仍是 NULL → `sw_init(NULL)` 空指针。
+- **修复**（commit `6fd600b`）：无节点时
+  `enet_err("no brcm,enet DT node; refuse init"); return -ENODEV;`
+  不再调用 `init_post`。
+- **第 2 次**（run #65 的 .ko，531,928 B）：`insmod` 返回 255，
+  `dmesg` 出现 `bcm_enet_init:L2479 no brcm,enet DT node; refuse init`；
+  **无 panic**，设备稳定，模块未加载（insmod 失败后自动回滚）。
+- **结论**：DTS 里的 `switch0`（compatible `brcm,enet`）是硬前提 ——
+  没有它 `has_dt()` 永远为 0。下一步按 `orig_968552CREF_CM_XG.dts` 给板级
+  DTS 补 switch0 + mdio + egphy/sgmii 节点，再验证 probe 停点。
+- 日志：`test_images/insmod_baseline.txt`、`insmod_run1.txt`、
+  `insmod_run2.txt`、`insmod_run2b.txt`
+
+
 
 
