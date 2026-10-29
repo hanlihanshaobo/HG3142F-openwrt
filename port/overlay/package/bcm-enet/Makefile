@@ -72,6 +72,10 @@ define Build/Prepare
 	# dt_parsing.c 会 #include "drivers/bcm_chip_arch.c"（厂商生成文件，GPL 包缺失）
 	# 换成仓库里的 compat 数据文件（已作为独立 .o 编进模块）
 	sed -i 's|#include "drivers/bcm_chip_arch.c"|#include <bcm_chip_arch.h>|' $(PKG_BUILD_DIR)/dt_parsing.c
+	# autogen 的 rdpa_ag_iptv.h 未 include rdpa_mcast.h，rdpa_fc_mcast_flow_t 未定义；
+	# 用 rdpa_fc_mcast_flow_key_t 替代（与 CI 探针一致）
+	sed -i 's/rdpa_fc_mcast_flow_t/rdpa_fc_mcast_flow_key_t/g' \
+		$(SDK_DIR)/sdk/rdp/drivers/rdpa_gpl/include/autogen/rdpa_ag_iptv.h
 	# 6.18 的 of_platform.h 不再顺带 include platform_device.h
 	sed -i 's|#include <linux/of_platform.h>|#include <linux/of_platform.h>\n#include <linux/platform_device.h>|' $(PKG_BUILD_DIR)/dt_parsing.c
 	# runner.c 的 struct ethswctl_data 在 <bcm/bcmswapitypes.h>，runner.h 只在芯片宏下 include
