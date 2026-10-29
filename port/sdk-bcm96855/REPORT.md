@@ -595,3 +595,15 @@ FPM_CTRL 恢复 `0x00100188`、7 个寄存器恢复、三块内存释放。
 下一步需要分支 6 提供 DSPTCHR credit 值与 RNR 端口表编码，否则 C3 只能
 停在 ring+BBH。
 
+
+
+## 2026-10-30：默认参数回归（link/insmod 循环）
+
+- `link_cycle.sh 10 lan2`：10/10 成功，恢复 3030–3050ms（avg 3042ms）；
+- `insmod_cycle.sh 5`：5/5 rc=0、carrier=1、无未知 WARN（每轮 6 条已知
+  dev_addr WARN）；Oops/BUG/panic=0；uptime 连续。
+- 修复 `insmod_cycle.sh`：dmesg 环形缓冲会回绕（before=1450/after=1437），
+  行号切片失效导致 WARN 计数为 0；改为 /dev/kmsg 标记 + awk 切片，
+  重跑 3 轮计数正确（known=6/轮）。
+- 设备结束状态：rmmod，仅 eth0/br-lan/lo。
+
