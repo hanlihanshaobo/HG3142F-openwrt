@@ -81,6 +81,156 @@
 		linux,pci-domain = <2>;
 		status = "okay";
 	};
+
+	/*
+	 * bcm_enet：unimac + Runner 交换芯片
+	 *
+	 * 数据来自实机原厂 DTS（orig_968552CREF_CM_XG.dts）。节点名加 bcm_
+	 * 前缀，避免和上游 bcm6855.dtsi 重名；驱动全部按 compatible 查找，
+	 * 不依赖节点名。
+	 *
+	 * switch0 是 dt_parsing.c 的入口：has_dt() 只有在能找到
+	 * compatible="brcm,enet" 且至少一个子节点有可用端口时才返回 1。
+	 * 没有它，bcm_enet_init() 会走 BP 老路径并因为 root_sw==NULL 崩溃。
+	 */
+	bcm_unimac: unimac3 {
+		compatible = "brcm,unimac3";
+		reg = <0x828a8000 0x6000>, <0x828b0000 0x1800>;
+		conf_offset = <0x1000>;
+		mib_offset = <0x400>;
+		top_offset = <0x400>;
+	};
+
+	bcm_egphy: egphy {
+		compatible = "brcm,egphy";
+		reg = <0x828ba204 0xc>;
+	};
+
+	bcm_sgmii: sgmii {
+		compatible = "brcm,sgmii";
+		reg = <0x828ba280 0x14>;
+	};
+
+	/* 实机是 brcm,mdio1（0xff802060）；bcm_enet 的 MDIO_V1 总线 */
+	bcm_mdio1: mdio1 {
+		compatible = "brcm,mdio1";
+		reg = <0xff802060 0x10>;
+	};
+
+	bcm_mdio: mdio {
+		compatible = "simple-bus";
+		bus-type = "MDIO_V1";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* 4 个 LAN GPHY（原厂 EGPHY，MDIO 地址 1..4） */
+		phy_lan0: ethernet-phy@1 {
+			compatible = "brcm,bcaphy";
+			phy-type = "EGPHY";
+			reg = <1>;
+			status = "okay";
+		};
+
+		phy_lan1: ethernet-phy@2 {
+			compatible = "brcm,bcaphy";
+			phy-type = "EGPHY";
+			reg = <2>;
+			status = "okay";
+		};
+
+		phy_lan2: ethernet-phy@3 {
+			compatible = "brcm,bcaphy";
+			phy-type = "EGPHY";
+			reg = <3>;
+			status = "okay";
+		};
+
+		phy_lan3: ethernet-phy@4 {
+			compatible = "brcm,bcaphy";
+			phy-type = "EGPHY";
+			reg = <4>;
+			status = "okay";
+		};
+
+		/* lan4 走 SGMII（MDIO 地址 6） */
+		phy_lan4: ethernet-phy@6 {
+			compatible = "brcm,bcaphy";
+			phy-type = "SGMII";
+			reg = <6>;
+			status = "okay";
+		};
+	};
+
+	switch0 {
+		compatible = "brcm,enet";
+		label = "bcmsw";
+		sw-type = "RUNNER_SW";
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+				mac-type = "UNIMAC";
+				phy-handle = <&phy_lan0>;
+				phy-mode = "gmii";
+				label = "lan0";
+				status = "okay";
+			};
+
+			port@1 {
+				reg = <1>;
+				mac-type = "UNIMAC";
+				phy-handle = <&phy_lan1>;
+				phy-mode = "gmii";
+				label = "lan1";
+				status = "okay";
+			};
+
+			port@2 {
+				reg = <2>;
+				mac-type = "UNIMAC";
+				phy-handle = <&phy_lan2>;
+				phy-mode = "gmii";
+				label = "lan2";
+				status = "okay";
+			};
+
+			port@3 {
+				reg = <3>;
+				mac-type = "UNIMAC";
+				phy-handle = <&phy_lan3>;
+				phy-mode = "gmii";
+				label = "lan3";
+				status = "okay";
+			};
+
+			port@5 {
+				reg = <5>;
+				mac-type = "UNIMAC";
+				phy-handle = <&phy_lan4>;
+				phy-mode = "hsgmii";
+				label = "lan4";
+				status = "okay";
+			};
+
+			/*
+			 * reg 6 = PON/XFI WAN。首轮 probe 先关掉：PON PHY 驱动
+			 * （phy_drv_pon）要到 init_post 才注册，而端口解析发生在
+			 * init_post 之前，找不到 PHY 会让整次 probe 提前失败。
+			 * 等 LAN 路径跑通再单独打开。
+			 */
+			port@6 {
+				reg = <6>;
+				phy-mode = "xfi";
+				detect;
+				is-wan;
+				label = "wan0";
+				status = "disabled";
+			};
+		};
+	};
 };
 
 /* 串口：上游默认 disabled */
