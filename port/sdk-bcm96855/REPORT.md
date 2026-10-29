@@ -176,6 +176,32 @@ undefined_symbols_raw  96 行  ← 全是 vmlinux 导出（kmalloc/printk/of_* �
 - 日志：`test_images/insmod_baseline.txt`、`insmod_run1.txt`、
   `insmod_run2.txt`、`insmod_run2b.txt`
 
+## 十一、板级 DTS 补 switch0 + module-only 出 DTB（2026-10-29 晚）
+
+- **DTS 新增**（均挂在根节点下）：
+  - `unimac3`（brcm,unimac3，双 reg 窗口 0x828a8000/0x828b0000）
+  - `egphy`（0x828ba204）、`sgmii`（0x828ba280）、`mdio1`（0xff802060）
+  - `mdio`（simple-bus + `bus-type="MDIO_V1"`）：`ethernet-phy@1..4` = EGPHY，
+    `ethernet-phy@6` = SGMII
+  - `switch0`（`brcm,enet` / `sw-type="RUNNER_SW"` / `label="bcmsw"`）：
+    `ports/port@0..3` = gmii lan0-3，`port@5` = hsgmii lan4；
+    `port@6`（PON/XFI WAN）先 `disabled`（PON PHY 要到 init_post 才注册）
+  - 节点名加 `bcm_` 前缀避免与上游 `bcm6855.dtsi` 冲突；上游确认无 enet/mdio 节点
+- **DTB 构建**：module-only 里加了一步。第一版用 `make target/linux/compile`
+  会触发整棵内核重编（run #67：20 分钟且没产出 board dtb，失败）；改成
+  `gcc -E` + `$KDIR/scripts/dtc/dtc` 直接编单个 DTS，**1 秒**完成。
+- **run #68**：module-only **239 秒（3m59s）**，artifact `bcm-enet-module-68`：
+  `bcm_enet.ko` 531,928 B + `bcm96855-mb4784w.dtb` 8,432 B（含 switch0/ports/5 phy）
+- **FIT（未刷机）**：`test_images/bootfs1-dts-switch.fit`
+  - 输入：原厂 `mtd7_bootfs1.bin` + `v47-zImage.bin` + run #68 的 dtb
+  - `default = conf_lx_968552CREF_CM_XG`（fit_setdefault 设置）
+  - kernel sha256 `d69da356…`、fdt sha256 `0e74ae28…`，均与 `hash-1` 一致
+  - 内嵌 FDT 可解析到 `switch0`、`ports/port@0..5`、`mdio/ethernet-phy@*`
+  - 大小 8,564,358 B；md5 `8d6ea0f075e2431ef676655e35fc9203`；
+    sha256 `f27d75ff972732cae1c5f4b69f1e4a9c99b3120ffceb72e9f748b75578171a9a`
+- **下一步**：等设备窗口，把该 FIT 写到 bootfs1 后启动；insmod 预期停在
+  `Failed to create mac for port 0`（unimac 源码缺失），再决定自写 MAC 驱动。
+
 
 
 
