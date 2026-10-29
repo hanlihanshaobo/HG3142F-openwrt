@@ -125,7 +125,8 @@ ENET_NOWARN:= \
 	-Wno-error=int-conversion -Wno-error=return-mismatch \
 	-Wno-error=unused-function -Wno-error=discarded-qualifiers \
 	-Wno-error=missing-prototypes -Wno-error=old-style-declaration \
-	-Wno-error=unused-variable -Wno-error=override-init -Wno-error=address
+	-Wno-error=unused-variable -Wno-error=override-init -Wno-error=address \
+	-Wno-error=vla-larger-than -Wno-error=vla
 
 define Build/Compile
 	+$(KERNEL_MAKE) M=$(PKG_BUILD_DIR) \

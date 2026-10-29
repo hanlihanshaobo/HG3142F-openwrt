@@ -60,6 +60,7 @@
 | #53 | `aef2f4e` | 仍停在编译，无链接（此前"15 个 undefined"记录有误） |
 | #54 | `643104a` | 3 个真实阻塞：runner_common switchdev 原型 / `<stdarg.h>` / `drivers/bcm_chip_arch.c` |
 | #55 | `a6498a6` | 13 个 .o 中 11 个编过；仅 `runner.o`（`struct ethswctl_data` 未定义）与 `dt_parsing.o`（6.18 的 `of_platform.h` 不再带 `platform_device.h`）失败；**仍无 .ko** |
+| #56 | `eda9b74` | 14 个 .o 中 13 个编过；只剩 `runner.o`：`BDMF_MATTR` 展开成 VLA，被 `-Werror=vla-larger-than` 拦下（2 处）；**仍无 .ko** |
 
 run #55 追加结论：
 - 我们新加的 `phy_drv_compat.o` / `enet_framework_stubs.o` / `bcm_chip_arch_compat.o` 全部编译通过；
@@ -72,4 +73,8 @@ run #55 追加结论：
    `runner.h` 只在 `CONFIG_BCM96855` 等芯片宏下 include 它）；
 3. 新增 `compat/bcmkernel_stubs.c`：`kerSysGetMacAddress`（本地管理 MAC 占位）、
    `kerSysReleaseMacAddress`、DyingGasp 注册/注销（no-op）。
+
+run #56 追加修复：`BDMF_MATTR()` 用函数返回值当数组长度 → VLA，GCC 的
+`-Wvla-larger-than` 在 6.18 的 `-Werror` 下变成错误。加
+`-Wno-error=vla-larger-than -Wno-error=vla`（运行时长度由 attr 数决定，很小）。
 
