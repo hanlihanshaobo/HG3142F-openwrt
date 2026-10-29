@@ -43,12 +43,14 @@ COMPAT_SRC:=$(SDK_DIR)/compat
 BDMF_DIR:=$(SDK_DIR)/sdk/bcmdrivers/opensource/char/bdmf/impl1
 
 # 与 CI 探针的 bcm_enet-y 完全一致（enit_ingress / archer_enet 等不走这条路径）
-ENET_OBJS:=enet port runner dt_parsing g9991 mux_index phy_drv_pon sw_common port_types
+# phy_drv_compat.o 是我们自己补的 PHY 框架实现（原厂只有 prebuilt phy_drv.o，无源码）
+ENET_OBJS:=enet port runner dt_parsing g9991 mux_index phy_drv_pon sw_common port_types phy_drv_compat
 
 define Build/Prepare
 	$(INSTALL_DIR) $(PKG_BUILD_DIR)/compat $(PKG_BUILD_DIR)/shim/linux
 	$(CP) $(ENET_DIR)/*.c $(ENET_DIR)/*.h $(PKG_BUILD_DIR)/
 	$(CP) $(COMPAT_SRC)/*.h $(PKG_BUILD_DIR)/compat/
+	$(CP) $(COMPAT_SRC)/phy_drv_compat.c $(PKG_BUILD_DIR)/
 	# 6.18 的 sk_buff 没有厂商补丁加的 queue 成员 → 屏蔽 nbuff.h 里对应 accessor
 	$(CP) $(SDK_DIR)/sdk/kernel/bcmkernel/include/linux/nbuff.h $(PKG_BUILD_DIR)/shim/linux/nbuff.h
 	sed -i '/__BUILD_NBUFF_\(SET\|GET\)_ACCESSOR(.*queue/d' $(PKG_BUILD_DIR)/shim/linux/nbuff.h
@@ -64,6 +66,7 @@ ENET_INC:= \
 	-I$(PKG_BUILD_DIR)/shim \
 	-I$(PKG_BUILD_DIR)/compat \
 	-I$(PKG_BUILD_DIR) \
+	-I$(SDK_DIR)/sdk/bcmdrivers/opensource/phy \
 	-I$(SDK_DIR)/sdk/bcmdrivers/opensource/net/enet/shared \
 	-I$(SDK_DIR)/sdk/bcmdrivers/opensource/include/bcm963xx \
 	-I$(SDK_DIR)/sdk/bcmdrivers/broadcom/include/bcm963xx \
