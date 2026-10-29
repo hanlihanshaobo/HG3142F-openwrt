@@ -87,6 +87,9 @@ define Build/Prepare
 	sed -i 's#skb->recycle_flags |= rx_info->extra_skb_flags;#/* compat */#' $(PKG_BUILD_DIR)/enet.c
 	# 卸载/初始化失败时停掉 compat 的 PHY 轮询 workqueue（否则模块卸载后定时器还在跑）
 	sed -i 's|^    enet_err("ENET system destructed|    phy_drv_compat_exit();\n    enet_err("ENET system destructed|' $(PKG_BUILD_DIR)/enet.c
+	# 没有 brcm,enet 节点时 has_dt()=0，原厂会直接 bcm_enet_init_post()，
+	# 而 root_sw 还是 NULL -> sw_init(NULL) 空指针 panic。改成安全失败。
+	sed -i 's|^        rc = bcm_enet_init_post();|        enet_err("no brcm,enet DT node; refuse init"); return -ENODEV;|' $(PKG_BUILD_DIR)/enet.c
 	printf '%s\n' \
 		'obj-m := bcm_enet.o' \
 		'bcm_enet-y := $(addsuffix .o,$(ENET_OBJS))' \

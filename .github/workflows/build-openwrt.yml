@@ -373,6 +373,8 @@ jobs:
           # 卸载/初始化失败时停掉 compat 的 PHY 轮询 workqueue，否则模块被卸载后
           # 定时器仍在跑（work 函数代码已不在）→ 内核崩。插在退出日志之前。
           sed -i 's|^    enet_err("ENET system destructed|    phy_drv_compat_exit();\n    enet_err("ENET system destructed|' "$ENET/enet.c" || true
+          # 没有 brcm,enet 节点时 has_dt()=0，原厂直接 init_post，root_sw=NULL -> panic
+          sed -i 's|^        rc = bcm_enet_init_post();|        enet_err("no brcm,enet DT node; refuse init"); return -ENODEV;|' "$ENET/enet.c" || true
           export STAGING_DIR="$TOP/sources/openwrt/staging_dir"
           # -k：遇错不停，一轮把 enet/port/runner/... 所有文件的错误全暴露出来
           make -k -C "$KDIR" M="$PROBE" ARCH=arm CROSS_COMPILE="$CROSS" \
