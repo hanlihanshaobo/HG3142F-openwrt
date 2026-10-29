@@ -253,26 +253,7 @@ jobs:
           time make package/bcm-enet/clean package/bcm-enet/compile V=s 2>&1 | tee ../../module_build.log
           echo "module_build $(date +%s)" >> "$GITHUB_WORKSPACE/timing.marks"
 
-          # 3b) 顺带生成 DTB（KERNELNAME=zImage dtbs；缓存命中时只重编 DTS）
-          echo "=== building DTB ==="
-          make target/linux/compile V=s > ../../dtb_build.log 2>&1 || {
-            echo "::error::DTB 构建失败"
-            tail -60 ../../dtb_build.log
-            exit 1
-          }
-          DTB=$(find build_dir -name '*bcm96855-mb4784w*.dtb' -type f 2>/dev/null | head -1)
-          if [ -n "$DTB" ]; then
-            mkdir -p ../../out
-            cp -v "$DTB" ../../out/bcm96855-mb4784w.dtb
-            echo "dtb: $(stat -c%s ../../out/bcm96855-mb4784w.dtb) 字节 ($DTB)"
-          else
-            echo "::warning::没找到 bcm96855-mb4784w.dtb"
-            find build_dir -name '*.dtb' -type f | head -10 || true
-          fi
-          cp ../../dtb_build.log ../../out/dtb_build.log 2>/dev/null || true
-          echo "dtb_build $(date +%s)" >> "$GITHUB_WORKSPACE/timing.marks"
-
-          # 4) 收集产物与日志（先拷日志，失败时也能在 artifact 里看到真实错误）
+          # 3a) 先收 .ko 与未决符号（放在 DTB 之前：后续任何失败都还有产物）
           mkdir -p ../../out
           cp ../../module_build.log ../../out/module_build.log 2>/dev/null || true
           KO=$(find build_dir -path '*bcm-enet*/bcm_enet.ko' -type f 2>/dev/null | head -1)
@@ -303,7 +284,32 @@ jobs:
             tail -60 ../../module_build.log || true
             exit 1
           fi
-          [ -f ../../probe_enet_sdk.log ] && cp ../../probe_enet_sdk.log ../../out/probe_enet_sdk.log || true
+
+          # 3b) 顺带生成 DTB：直接用内核构建树里的 dtc 编单个 DTS（秒级，
+          #     不走 make target/linux/compile —— 那会重编整棵内核，20 分钟）
+          echo "=== building DTB ==="
+          KDIR=$(find build_dir -maxdepth 4 -type d -name 'linux-6.18*' | head -1)
+          DTS=target/linux/bcmbca/dts/bcm96855-mb4784w.dts
+          if [ -x "$KDIR/scripts/dtc/dtc" ] && command -v gcc >/dev/null 2>&1; then
+            if ! { gcc -E -nostdinc -undef -D__DTS__ -x assembler-with-cpp \
+                       -I "$KDIR/arch/arm/boot/dts" -I "$KDIR/include" \
+                       -I "$KDIR/scripts/dtc/include-prefixes" \
+                       "$DTS" -o /tmp/board-pre.dts && \
+                   "$KDIR/scripts/dtc/dtc" -I dts -O dtb \
+                       -o ../../out/bcm96855-mb4784w.dtb /tmp/board-pre.dts; } \
+                 > ../../dtb_build.log 2>&1; then
+              echo "::error::DTB 构建失败"
+              tail -40 ../../dtb_build.log
+              exit 1
+            fi
+            echo "dtb: $(stat -c%s ../../out/bcm96855-mb4784w.dtb) 字节"
+          else
+            echo "::warning::没有 dtc/gcc，跳过 DTB"
+            ls -l "$KDIR/scripts/dtc" 2>&1 | head -10 || true
+          fi
+          cp ../../dtb_build.log ../../out/dtb_build.log 2>/dev/null || true
+          echo "dtb_build $(date +%s)" >> "$GITHUB_WORKSPACE/timing.marks"
+
 
       - name: Summarize build failure
         if: failure()
