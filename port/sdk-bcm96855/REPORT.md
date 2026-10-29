@@ -607,3 +607,17 @@ FPM_CTRL 恢复 `0x00100188`、7 个寄存器恢复、三块内存释放。
   重跑 3 轮计数正确（known=6/轮）。
 - 设备结束状态：rmmod，仅 eth0/br-lan/lo。
 
+
+
+## 2026-10-30：C3 bit2/bit3 实现（run #91，离线构建）
+
+- DSPTCHR `0x82880000+0x300+4*v`：RMW 清 bit[31:20]（credit=0），保留
+  低 20 位阈值；v=0..4（参数 `rdp_c3_dsp_ports`）。
+- RNR `0x82800000+0x1000*core` bit0=1 RMW；core=0..5（参数 `rdp_c3_rnr_cores`）。
+- BBH_RX `0x82898000+0x400*p`：+0x04=p|(p<<8)、+0x30=0x12、+0x34=0xff、
+  +0x3c=0x3（最后写）；p=0..6（参数 `rdp_c3_rx_ports`）。
+- 每项写后读回；restore 顺序 BBH_RX(先关) → RNR → DSPTCHR → ring → BBH_TX。
+- run #91 `.ko` 667,820 B、未决 0；**未上设备**。
+- 上设备用 `rdp_c2=1 rdp_c3=15 rdp_c3_ring_base=0x82703000`；关键验收是
+  `0x82703000+ring_id*0x10+6` 的大端写指针是否增长。
+
