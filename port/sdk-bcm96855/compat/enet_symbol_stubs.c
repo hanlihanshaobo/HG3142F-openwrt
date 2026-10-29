@@ -21,6 +21,7 @@
 #include <linux/spinlock.h>
 #include <linux/skbuff.h>
 #include <linux/netdevice.h>
+#include <linux/mii.h>
 #include <linux/of.h>
 #include <linux/gpio/consumer.h>
 #include <linux/pinctrl/consumer.h>
@@ -482,9 +483,21 @@ static int runner_port_mtu_set_stub(enetx_port_t *port, int mtu)
 static void runner_port_open_stub(enetx_port_t *port)
 {
 	phy_dev_t *phy = port->p.phy;
+	uint16_t id1 = 0, id2 = 0, bmsr = 0, bmcr = 0;
+	int rc;
 
 	if (!phy || !phy->phy_drv)
 		return;
+
+	/* Spike A 证据：把 PHY ID / BMSR / BMCR 原始值打出来。
+	 * PHY ID 非 0 就说明 MDIO 读通路是通的；BMSR bit2 就是 link。 */
+	rc = phy_bus_read(phy, MII_PHYSIDR1, &id1);
+	rc |= phy_bus_read(phy, MII_PHYSIDR2, &id2);
+	phy_bus_read(phy, MII_BMSR, &bmsr);	/* latch-low：先读一次 */
+	phy_bus_read(phy, MII_BMSR, &bmsr);
+	phy_bus_read(phy, MII_BMCR, &bmcr);
+	pr_info("bcm-phy: %s mdio=%d id=%04x:%04x bmsr=%04x bmcr=%04x\n",
+		port->obj_name, rc, id1, id2, bmsr, bmcr);
 
 	if (phy_dev_read_status(phy) == 0)
 		phy_dev_link_change_notify(phy);

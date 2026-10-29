@@ -1352,7 +1352,9 @@ static int enet_set_mac_addr(struct net_device *dev, void *p)
     /* Don't do anything if there isn't an actual address change */
     if (memcmp(dev->dev_addr, addr->sa_data, dev->addr_len)) {
         kerSysReleaseMacAddress(dev->dev_addr);
-        memmove(dev->dev_addr, addr->sa_data, dev->addr_len);
+        /* compat(6.18): 直接 memmove 不会更新 addr_shadow，__dev_open()
+         * 会报 "Incorrect netdev->dev_addr"（虽然不致命）。用标准 API。 */
+        eth_hw_addr_set(dev, (const u8 *)addr->sa_data);
     }
 
     return 0;
