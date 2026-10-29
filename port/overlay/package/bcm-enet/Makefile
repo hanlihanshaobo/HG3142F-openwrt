@@ -67,9 +67,7 @@ define Build/Prepare
 	# 'struct switchdev_attr declared inside parameter list' 被 -Werror 拦下）
 	sed -i 's/#if defined(CONFIG_NET_SWITCHDEV)/#if 0/; s/#ifdef CONFIG_NET_SWITCHDEV/#if 0/' \
 		$(PKG_BUILD_DIR)/enet.c $(PKG_BUILD_DIR)/port.h $(PKG_BUILD_DIR)/g9991.c \
-		$(PKG_BUILD_DIR)/runner.c $(PKG_BUILD_DIR)/runner_common.h \
-		$(PKG_BUILD_DIR)/enet_inline_platform.h $(PKG_BUILD_DIR)/enet_inline_runner.h \
-		$(PKG_BUILD_DIR)/sw_common.h
+		$(PKG_BUILD_DIR)/runner_common.h
 	# dt_parsing.c 会 #include "drivers/bcm_chip_arch.c"（厂商生成文件，GPL 包缺失）
 	# 换成仓库里的 compat 数据文件（已作为独立 .o 编进模块）
 	sed -i 's|#include "drivers/bcm_chip_arch.c"|#include <bcm_chip_arch.h>|' $(PKG_BUILD_DIR)/dt_parsing.c

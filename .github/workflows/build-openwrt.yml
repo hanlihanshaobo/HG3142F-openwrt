@@ -232,10 +232,12 @@ jobs:
           # 6.18 的 sk_buff 已无 queue 成员（4.1 由 Broadcom patch 加）；探针阶段临时去掉对应 accessor
           sed -i '/__BUILD_NBUFF_\(SET\|GET\)_ACCESSOR(.*queue/d' "$SDK/kernel/bcmkernel/include/linux/nbuff.h" || true
           # 6.18 已移除 struct switchdev_ops；探针阶段跳过该字段
+          # 只关这四个文件：runner_common.h 的 #ifdef 里是 switchdev_attr/trans 原型，
+          # 6.18 没有这些结构，会被 -Werror 当成 "declared inside parameter list"。
+          # 注意不要动 enet_inline_platform.h —— 它在同一宏里 include <linux/nbuff.h>，
+          # 关掉会让 FkBuff_t 等类型在 enet.c 里失踪。
           sed -i 's/#if defined(CONFIG_NET_SWITCHDEV)/#if 0/; s/#ifdef CONFIG_NET_SWITCHDEV/#if 0/' \
-                 "$ENET/port.h" "$ENET/enet.c" "$ENET/g9991.c" "$ENET/runner.c" \
-                 "$ENET/runner_common.h" "$ENET/enet_inline_platform.h" \
-                 "$ENET/enet_inline_runner.h" "$ENET/sw_common.h" || true
+                 "$ENET/port.h" "$ENET/enet.c" "$ENET/g9991.c" "$ENET/runner_common.h" || true
           # dt_parsing.c 里 #include "drivers/bcm_chip_arch.c" 是厂商生成文件，GPL 包没带；
           # 换成 compat/bcm_chip_arch_compat.c 提供的同名数组（该文件单独编进模块）
           sed -i 's|#include "drivers/bcm_chip_arch.c"|#include <bcm_chip_arch.h>|' "$ENET/dt_parsing.c" || true
