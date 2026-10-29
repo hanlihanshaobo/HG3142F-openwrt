@@ -134,7 +134,8 @@ ENET_NOWARN:= \
 
 define Build/Compile
 	+$(KERNEL_MAKE) M=$(PKG_BUILD_DIR) \
-		KCFLAGS="$(ENET_INC) $(ENET_DEFS) $(ENET_NOWARN)" modules
+		KCFLAGS="$(ENET_INC) $(ENET_DEFS) $(ENET_NOWARN)" \
+		KBUILD_MODPOST_WARN=1 modules
 endef
 
 $(eval $(call KernelPackage,bcm-enet))
