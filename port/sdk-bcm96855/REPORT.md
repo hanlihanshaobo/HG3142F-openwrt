@@ -202,6 +202,41 @@ undefined_symbols_raw  96 行  ← 全是 vmlinux 导出（kmalloc/printk/of_* �
 - **下一步**：等设备窗口，把该 FIT 写到 bootfs1 后启动；insmod 预期停在
   `Failed to create mac for port 0`（unimac 源码缺失），再决定自写 MAC 驱动。
 
+## 十二、真机刷写 + insmod（2026-10-29 20:00-20:40）
+
+- **刷写**：`ubiupdatevol /dev/ubi0_3` 写入 FIT，回读 sha256 一致；
+  U-Boot 日志 `Read 8564358 bytes from volume bootfs1`、
+  `Using 'conf_lx_968552CREF_CM_XG'`、kernel/fdt hash `sha256+ OK`、
+  `Starting kernel`，无 panic，SSH 正常。
+- **但 switch0 没生效**：`/sys/firmware/fdt` 的 sha256 等于 `v47-zImage.bin`
+  尾部 appended DTB（`993d57c2…`）。ARM zImage 自带的 DTB 覆盖了 FIT fdt。
+- **修复**：module-only 顺手导出内核树里未 append 的
+  `arch/arm/boot/zImage`（3,662,456 B，比 v47 少 6,449 B = 原 appended DTB）。
+  重新打包 `test_images/bootfs1-dts-switch2.fit`（8,557,906 B，md5
+  `988a04533b906b6e1b231a3a39b8920f`，sha256 `bce2dc9d…`）再刷。
+- **第二次启动成功**：U-Boot 用 `conf_lx_…`、fdt hash OK；
+  起来后 `/proc/device-tree/switch0` 存在（compatible/label/ports/sw-type），
+  `/proc/device-tree/mdio/ethernet-phy@1..4,6` 齐全。
+- **insmod（run #69 的 .ko，无 RUNNER）**：加载成功但 probe 停在
+  ```
+  bcmenet DT
+  _assign_port_class:L185 failed to create port type 0 port_class -1
+  of_sw_probe:L341 failed to create switch 0 (RUNNER_SW)
+  of_bcmenet switch0: probe with driver of_bcmenet failed with error -22
+  ```
+  根因：`port_types.c` 的 `case PORT_TYPE_RUNNER_SW` 在 `#ifdef RUNNER` 内。
+- **修复**：加 `-DRUNNER`。run #70 出 .ko（541,028 B）但缺
+  `port_runner_sw` / `port_runner_port`（在 runner_with_switch.c）。
+  run #71 直接编该文件失败（缺 `rdpa_cpu_tx_extra_info_t`、`sf2_sw`、
+  `port_runner_sw_config_trunk` 等）。run #72 改为在 compat 里给最小 ops 表
+  （`.init` 打印错误并返回 -1），.ko 542,136 B、未决 0。
+- **run #72 的 .ko 仍 panic**：insmod 后 SSH 断开，看门狗重启（uptime 99s），
+  模块未加载；本轮未开串口抓取，panic 原文待下一轮定位。
+- **当前设备状态**：vol3 = `bootfs1-dts-switch2.fit`，正常启动、switch0 在 DT 中；
+  模块不自动加载，不影响正常使用。未回滚。
+- **下一步**：用串口抓 run #72 .ko 的 panic 栈，定位是 sw_init 的端口遍历
+  还是 port_init 的 netdev 注册；再决定补 ops 表字段还是继续 fail-closed。
+
 
 
 
