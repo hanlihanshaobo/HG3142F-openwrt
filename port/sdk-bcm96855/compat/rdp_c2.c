@@ -45,14 +45,19 @@ struct c2_reg {
 	int written;
 };
 
+/*
+ * 注：QM_FPM_POOLS_THR 的字段是 7 bit（AG getter 掩 0x7f，setter 校验收
+ * byte 的最高位必须为 0），所以 128 会被硬件丢掉（run #86 现场：写 0x80
+ * 读回 0）。这里取 64；127 是上限。
+ */
 static struct c2_reg c2_regs[] = {
 	{ 0x034, "FPM_BASE",	0 },		/* 运行时填 pool phys */
 	{ 0x038, "FPM_COHERENT", 0 },		/* 同上 */
 	{ 0x03c, "DDR_SOP",	C2_DDR_SOP },
-	{ 0x200, "FPM_POOLS_THR0", C2_TOKENS },
 	{ 0x280, "UG0_LOWER",	C2_TOKENS / 2 },
 	{ 0x284, "UG0_MID",	C2_TOKENS * 3 / 4 },
 	{ 0x288, "UG0_HIGHER",	C2_TOKENS * 7 / 8 },
+	{ 0x200, "FPM_POOLS_THR0", 64 },	/* 7 bit 字段，最大 127 */
 };
 
 static void *c2_pool;
@@ -64,7 +69,7 @@ void rdp_c2_restore(void)
 	void __iomem *qm;
 	int i;
 
-	if (!c2_active)
+	if (!c2_active && !c2_pool)
 		return;
 
 	qm = ioremap(QM_BASE, QM_WINDOW);
@@ -80,7 +85,8 @@ void rdp_c2_restore(void)
 		iounmap(qm);
 	}
 
-	free_pages_exact(c2_pool, C2_POOL_SIZE);
+	if (c2_pool)
+		free_pages_exact(c2_pool, C2_POOL_SIZE);
 	c2_pool = NULL;
 	c2_pool_phys = 0;
 	c2_active = 0;
@@ -101,6 +107,7 @@ void rdp_c2_run(void)
 		return;
 	}
 	c2_pool_phys = (u32)virt_to_phys(c2_pool);
+	c2_active = 1;		/* 从这一刻起，失败路径/rmmod 都要恢复并释放 */
 
 	c2_regs[0].val = c2_pool_phys;
 	c2_regs[1].val = c2_pool_phys;
@@ -128,8 +135,8 @@ void rdp_c2_run(void)
 		rb = readl(qm + r->off);
 		r->written = 1;
 
-		pr_info("C2a %-14s 0x%03x wrote=0x%08x readback=0x%08x %s\n",
-			r->name, r->off, r->val, rb,
+		pr_info("C2a %-14s 0x%03x old=0x%08x wrote=0x%08x readback=0x%08x %s\n",
+			r->name, r->off, r->old, r->val, rb,
 			(rb == r->val) ? "OK" : "MISMATCH");
 
 		if (rb != r->val) {
@@ -148,8 +155,7 @@ void rdp_c2_run(void)
 
 	iounmap(qm);
 
+	/* 失败：恢复所有已写寄存器并释放池；成功：保持到 rmmod 再恢复 */
 	if (stop)
 		rdp_c2_restore();
-	else
-		c2_active = 1;
 }
