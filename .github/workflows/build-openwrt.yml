@@ -569,6 +569,7 @@ jobs:
 
       # 缓存必须在构建之后保存：此时 staging_dir / dl 才真正存在
       - name: Save download directory cache
+        continue-on-error: true
         if: always() && steps.dl-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
@@ -576,6 +577,7 @@ jobs:
           key: openwrt-dl-${{ hashFiles('port/sources.lock.json') }}
 
       - name: Save toolchain cache
+        continue-on-error: true
         if: always() && steps.tc-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
@@ -587,6 +589,7 @@ jobs:
       # 只有内核树完整（完整构建成功，或 module-only 自愈构建成功）才保存，
       # 避免把半成品缓存写进去导致后续 module-only 全部踩坏。
       - name: Save kernel build tree cache
+        continue-on-error: true
         if: always() && steps.kernel-cache.outputs.cache-hit != 'true' && (steps.build.outcome == 'success' || steps.module_build.outcome == 'success')
         uses: actions/cache/save@v4
         with:
