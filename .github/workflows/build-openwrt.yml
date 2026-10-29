@@ -23,6 +23,11 @@ on:
         type: boolean
         required: false
         default: false
+      module_only:
+        description: '快速通道：只编 bcm_enet.ko（依赖内核构建树缓存，3-6 分钟）'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -44,6 +49,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Start timing
+        run: |
+          echo "job_start $(date +%s) mode=${{ inputs.module_only && 'module' || 'full' }}" > timing.marks
+          echo "mode=$( [ "${{ inputs.module_only }}" = "true" ] && echo module-only || echo full )"
 
       - name: Free disk space and add swap
         run: |
@@ -69,8 +79,11 @@ jobs:
           cd sources/openwrt
           echo "OpenWrt commit: $(git rev-parse HEAD)"
           ls target/linux | grep -x bcmbca
+          cd ..
+          echo "prepare $(date +%s)" >> timing.marks
 
       - name: Restore download directory cache
+        id: dl-cache
         uses: actions/cache/restore@v4
         with:
           path: sources/openwrt/dl
@@ -78,6 +91,7 @@ jobs:
           restore-keys: openwrt-dl-
 
       - name: Restore toolchain cache
+        id: tc-cache
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -86,11 +100,27 @@ jobs:
           key: openwrt-tc-${{ hashFiles('port/sources.lock.json') }}
           restore-keys: openwrt-tc-
 
+      # 内核构建树缓存：module-only 快速通道的关键。
+      # key 绑定：源码锁文件内容 + bcmbca target overlay（config/patches/dts）内容。
+      # 只缓存 linux-* 内核树与 target staging（toolchain 由上面的 tc 缓存负责）。
+      - name: Restore kernel build tree cache
+        id: kernel-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            sources/openwrt/build_dir/target-*/linux-*/
+            sources/openwrt/staging_dir/target-*/
+          key: openwrt-kernel-${{ hashFiles('port/sources.lock.json') }}-${{ hashFiles('port/overlay/target/linux/bcmbca/**') }}
+          restore-keys: |
+            openwrt-kernel-${{ hashFiles('port/sources.lock.json') }}-
+            openwrt-kernel-
+
       - name: Update and install feeds
         run: |
           cd sources/openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+          echo "feeds $(date +%s)" >> "$GITHUB_WORKSPACE/timing.marks"
 
       - name: Configure
         run: |
@@ -107,16 +137,20 @@ jobs:
             grep -qx "$k" .config || { echo "::error::缺少 $k（target 骨架或 device 定义未生效）"; exit 1; }
           done
           grep -E "CONFIG_TARGET_|CONFIG_KERNEL_" .config | head -20
+          echo "configure $(date +%s)" >> "$GITHUB_WORKSPACE/timing.marks"
 
       - name: Generate complete kernel config
         run: |
           cd sources/openwrt
           TOP="$(pwd)"
           exec > >(tee "$TOP/config.log") 2>&1
-          # 先让 OpenWrt 解包内核
-          make target/linux/prepare V=s 2>&1 | tail -5 || true
-
+          # 有内核树缓存时跳过解包（module-only 快速通道）；没有才 prepare
           KDIR=$(find build_dir -maxdepth 4 -type d -name 'linux-6.18*' | head -1)
+          if [ -z "$KDIR" ]; then
+            echo "内核树不存在，先 make target/linux/prepare"
+            make target/linux/prepare V=s 2>&1 | tail -5 || true
+            KDIR=$(find build_dir -maxdepth 4 -type d -name 'linux-6.18*' | head -1)
+          fi
           echo "KDIR=$KDIR" >> "$GITHUB_STEP_SUMMARY"
           if [ -z "$KDIR" ]; then
             echo "::error::没找到内核目录，无法生成配置"
@@ -159,6 +193,7 @@ jobs:
           cp .config "$CFG"
           echo "配置行数: $(wc -l < "$CFG")" >> "$GITHUB_STEP_SUMMARY"
           grep -E '^CONFIG_(ARCH_BCM|ARCH_BCMBCA|ARCH_BCMBCA_CORTEXA7|SERIAL_AMBA_PL011|MTD_NAND_BRCMNAND|ARM_LPAE|NR_CPUS|SMP)' "$CFG" >> "$GITHUB_STEP_SUMMARY" || true
+          echo "kernel_config $(date +%s)" >> "$GITHUB_WORKSPACE/timing.marks"
 
       - name: Download package sources
         if: ${{ !inputs.skip_download }}
@@ -167,11 +202,67 @@ jobs:
           make download -j8 || make download -j1 V=s
 
       - name: Build
+        id: build
+        if: ${{ inputs.module_only != true }}
         run: |
           cd sources/openwrt
           # 完整日志落盘，便于失败时生成可下载的错误摘要
           set -o pipefail
           yes "" | make -j$(nproc) 2>&1 | tee build.log | tail -120 || make -j1 V=s 2>&1 | tee build.log | tail -120
+          echo "full_build $(date +%s)" >> "$GITHUB_WORKSPACE/timing.marks"
+
+      # ------------------------------------------------------------------
+      # 快速通道：只编 bcm_enet.ko（module_only=true）
+      # 依赖上面恢复的内核构建树缓存；未命中则自愈跑一次完整构建。
+      # ------------------------------------------------------------------
+      - name: Module-only build (bcm_enet)
+        id: module_build
+        if: ${{ inputs.module_only }}
+        run: |
+          cd sources/openwrt
+
+          # 1) 缓存未命中 → 自愈：先完整构建一次，成功后由后面的 Save 步骤写缓存
+          if [ "${{ steps.kernel-cache.outputs.cache-hit }}" != "true" ]; then
+            echo "::warning::内核构建树缓存未命中，先跑一次完整构建（本次会慢，下次 3-6 分钟）"
+            # 与完整构建相同的写法：yes 的 SIGPIPE 不能算失败，所以不用 pipefail
+            yes "" | make -j$(nproc) 2>&1 | tee build.log | tail -60 || make -j1 V=s 2>&1 | tee build.log | tail -60
+          fi
+          echo "kernel_ready $(date +%s)" >> "$GITHUB_WORKSPACE/timing.marks"
+
+          # 2) 确保包被选中（注意不能 grep 子串：注释行 "# CONFIG_PACKAGE_... is not set" 也会命中）
+          if ! grep -qx 'CONFIG_PACKAGE_kmod-bcm-enet=m' .config; then
+            ./scripts/config --module PACKAGE_kmod-bcm-enet
+            make defconfig >/dev/null
+          fi
+          if ! grep -qx 'CONFIG_PACKAGE_kmod-bcm-enet=m' .config; then
+            echo "::error::CONFIG_PACKAGE_kmod-bcm-enet 仍未选中"
+            grep -n 'bcm-enet' tmp/.config-package.in 2>/dev/null | head -5 || true
+            exit 1
+          fi
+
+          # 3) 只编这个包；clean 保证每次都重新编 compat 层
+          time make package/bcm-enet/clean package/bcm-enet/compile V=s 2>&1 | tee ../../module_build.log
+          echo "module_build $(date +%s)" >> "$GITHUB_WORKSPACE/timing.marks"
+
+          # 4) 收集产物与日志
+          mkdir -p ../../out
+          KO=$(find build_dir -path '*bcm-enet*/bcm_enet.ko' -type f 2>/dev/null | head -1)
+          if [ -n "$KO" ]; then
+            cp -v "$KO" ../../out/bcm_enet.ko
+            echo "bcm_enet.ko: $(stat -c%s ../../out/bcm_enet.ko) 字节"
+            # 未决符号清单（insmod 前就能知道会不会被拒）
+            NM=$(find "$PWD/staging_dir" -path '*toolchain-*/bin/*-nm' 2>/dev/null | head -1)
+            [ -n "$NM" ] && "$NM" -u ../../out/bcm_enet.ko | sort -u > ../../out/undefined_symbols.txt || true
+            if [ -s ../../out/undefined_symbols.txt ]; then
+              echo "未决符号数: $(wc -l < ../../out/undefined_symbols.txt)"
+              head -30 ../../out/undefined_symbols.txt
+            fi
+          else
+            echo "::error::module-only 未产出 bcm_enet.ko"
+            exit 1
+          fi
+          cp ../../module_build.log ../../out/module_build.log
+          [ -f ../../probe_enet_sdk.log ] && cp ../../probe_enet_sdk.log ../../out/probe_enet_sdk.log || true
 
       - name: Summarize build failure
         if: failure()
@@ -195,7 +286,7 @@ jobs:
           head -120 ../../build_error.txt 2>/dev/null || true
 
       - name: SDK compile probe (bcm_enet)
-        if: always()
+        if: always() && inputs.module_only != true
         continue-on-error: true
         run: |
           set +e
@@ -290,7 +381,7 @@ jobs:
           mkdir -p out && cp probe_full.txt out/probe_enet_sdk.log || true
 
       - name: Package probe (kmod-bcm-enet)
-        if: always()
+        if: always() && inputs.module_only != true
         continue-on-error: true
         run: |
           set +e
@@ -318,7 +409,7 @@ jobs:
           mkdir -p ../../out && cp ../../pkg_enet.log ../../out/probe_pkg_enet.log || true
 
       - name: SDK compile probe (bcm_pcie)
-        if: always()
+        if: always() && inputs.module_only != true
         continue-on-error: true
         run: |
           set +e
@@ -359,7 +450,7 @@ jobs:
           grep -cE "error:|fatal error:" probe_pcie.txt || true
 
       - name: Export kernel Image / rootfs squashfs (构造厂商兼容 FIT + 持久化安装用)
-        if: always()
+        if: always() && inputs.module_only != true
         run: |
           mkdir -p out
           # 1) 非 initramfs 的内核裸镜像（initramfs 版有 25MB，塞不进 bootfs1）
@@ -405,7 +496,7 @@ jobs:
           fi
 
       - name: Collect artifacts
-        if: always()
+        if: always() && inputs.module_only != true
         run: |
           mkdir -p out
           # bcm_enet.ko：包没进镜像时也要能拿到，方便在设备上 insmod 验证
@@ -428,11 +519,29 @@ jobs:
         run: |
           find sources/openwrt/logs -name '*.txt' 2>/dev/null | head -5 | xargs -r tail -n 60
 
+      - name: Write timing summary
+        if: always()
+        run: |
+          mkdir -p out
+          if [ -f timing.marks ]; then
+            start=$(awk '$1=="job_start"{print $2}' timing.marks)
+            {
+              echo "run=${{ github.run_number }} mode=$( [ "${{ inputs.module_only }}" = "true" ] && echo module-only || echo full )"
+              echo "started=$(date -u -d "@$start" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "$start")"
+              echo "----- 步骤耗时（相对起始，秒） -----"
+              awk -v s="$start" '$1!="job_start"{printf "%-16s %6d s\n", $1, $2-s}' timing.marks
+              last=$(awk 'END{print $2}' timing.marks)
+              echo "total            $((last-start)) s"
+            } | tee out/timing.txt
+          else
+            echo "no timing.marks" | tee out/timing.txt
+          fi
+
       - name: Upload artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-mb4784w-${{ github.run_number }}
+          name: ${{ inputs.module_only && 'bcm-enet-module' || 'openwrt-mb4784w' }}-${{ github.run_number }}
           path: out/
           if-no-files-found: warn
           retention-days: 14
@@ -460,17 +569,28 @@ jobs:
 
       # 缓存必须在构建之后保存：此时 staging_dir / dl 才真正存在
       - name: Save download directory cache
-        if: always()
+        if: always() && steps.dl-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: sources/openwrt/dl
           key: openwrt-dl-${{ hashFiles('port/sources.lock.json') }}
 
       - name: Save toolchain cache
-        if: always()
+        if: always() && steps.tc-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
             sources/openwrt/staging_dir
             sources/openwrt/build_dir/toolchain-*
           key: openwrt-tc-${{ hashFiles('port/sources.lock.json') }}
+
+      # 只有内核树完整（完整构建成功，或 module-only 自愈构建成功）才保存，
+      # 避免把半成品缓存写进去导致后续 module-only 全部踩坏。
+      - name: Save kernel build tree cache
+        if: always() && steps.kernel-cache.outputs.cache-hit != 'true' && (steps.build.outcome == 'success' || steps.module_build.outcome == 'success')
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            sources/openwrt/build_dir/target-*/linux-*/
+            sources/openwrt/staging_dir/target-*/
+          key: openwrt-kernel-${{ hashFiles('port/sources.lock.json') }}-${{ hashFiles('port/overlay/target/linux/bcmbca/**') }}
