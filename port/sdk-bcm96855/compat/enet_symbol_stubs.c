@@ -491,8 +491,8 @@ static void runner_port_open_stub(enetx_port_t *port)
 
 	/* Spike A 证据：把 PHY ID / BMSR / BMCR 原始值打出来。
 	 * PHY ID 非 0 就说明 MDIO 读通路是通的；BMSR bit2 就是 link。 */
-	rc = phy_bus_read(phy, MII_PHYSIDR1, &id1);
-	rc |= phy_bus_read(phy, MII_PHYSIDR2, &id2);
+	rc = phy_bus_read(phy, MII_PHYSID1, &id1);
+	rc |= phy_bus_read(phy, MII_PHYSID2, &id2);
 	phy_bus_read(phy, MII_BMSR, &bmsr);	/* latch-low：先读一次 */
 	phy_bus_read(phy, MII_BMSR, &bmsr);
 	phy_bus_read(phy, MII_BMCR, &bmcr);
