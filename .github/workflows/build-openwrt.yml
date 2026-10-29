@@ -260,7 +260,7 @@ jobs:
             tail -60 ../../dtb_build.log
             exit 1
           }
-          DTB=$(find build_dir -name 'bcm96855-mb4784w.dtb' -type f 2>/dev/null | head -1)
+          DTB=$(find build_dir -name '*bcm96855-mb4784w*.dtb' -type f 2>/dev/null | head -1)
           if [ -n "$DTB" ]; then
             mkdir -p ../../out
             cp -v "$DTB" ../../out/bcm96855-mb4784w.dtb
@@ -269,6 +269,7 @@ jobs:
             echo "::warning::没找到 bcm96855-mb4784w.dtb"
             find build_dir -name '*.dtb' -type f | head -10 || true
           fi
+          cp ../../dtb_build.log ../../out/dtb_build.log 2>/dev/null || true
           echo "dtb_build $(date +%s)" >> "$GITHUB_WORKSPACE/timing.marks"
 
           # 4) 收集产物与日志（先拷日志，失败时也能在 artifact 里看到真实错误）
