@@ -446,3 +446,44 @@ bcm-phy: port_0:0 mdio=0 id=ae02:5371 bmsr=79c9 bmcr=1940
 再把 set_speed/set_duplex 的 reset 时序按 §4.4 伪 C 复核一遍
 （当前用 §4.10 参考实现：置 reset → 写速率 → 清 reset）。
 
+
+
+## 2026-10-29：PHY Power Down 修复 → lan2 carrier=1（run #83/#84）
+
+**现场现象**（run #82，LAN 口已插线）：4 个 EGPHY 都是
+`BMCR=0x1940`（bit11 POWER DOWN=1）、`BMSR=0x79c9`（bit2/bit5=0），
+`lan0..lan4` 全 `NO-CARRIER`。
+
+**根因（两层）**：
+1. compat 的 EGPHY/SGMII 驱动没有 `.power_set`，`phy_dev_power_set()`
+   是空操作（厂商 EGPHY 的 `.power_set = mii_power_set`）。
+2. `port_open()` 分派到我们的 `.open` 桩，覆盖了
+   `port_generic_open()` 里的 `phy_dev_power_set(phy, 1)`。
+
+**修复（commit 1202456）**：
+- `phy_drv_compat.c` 增加 `phy_compat_power_set()`：上电清 BMCR bit11
+  并置 ANRESTART，掉电置 bit11。
+- `runner_port_open_stub()` 在读状态前显式 `phy_dev_power_set(phy, 1)`。
+
+**run #83 回归**：PHY 上电、carrier 起来后设备重启。根因是
+`enet.c:1196` 直接调用 `egress_port->p.ops->dispatch_pkt()`，而
+`port_runner_port` 没实现该 op → NULL 调用。已在
+`enet_symbol_stubs.c` 补 `runner_port_dispatch_pkt_stub`（释放 skb +
+返回 -1，与厂商 `runner_with_switch.c:185-189` 一致）。
+
+**run #84 设备结果**（`.ko` 594,352 B、未决 0）：
+
+```
+bcm-phy: port_0:2 mdio=0 id=ae02:5371 bmsr=79c9 bmcr=1140
+lan2: <BROADCAST,MULTICAST,UP,LOWER_UP> ... state UP
+lan2 carrier=1 / operstate=up
+```
+
+- BMCR：`0x1940 → 0x1140`，bit11(POWER DOWN) 已清零（bit9 ANRESTART
+  已自行释放）。
+- BMSR 在 open 瞬间仍是 0x79c9（刚重启 AN）；200ms 轮询在 ~2-4s 后
+  看到 link，lan2 变成 `LOWER_UP`、carrier=1（DT port@2 / PHY addr 3）。
+- lan0/1/3/4 无网线仍为 NO-CARRIER；insmod/rmmod 正常，无 panic。
+- 备注：当前 `power_set(1)` 每次 open 都会重启 AN，`ifdown/ifup` 会有
+  2-3s 链路抖动；后续可改成「仅当 BMCR bit11 原为 1 时才 ANRESTART」。
+
