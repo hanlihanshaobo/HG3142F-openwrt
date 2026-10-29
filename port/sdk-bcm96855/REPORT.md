@@ -542,3 +542,21 @@ FPM_POOLS_THR0 0x200 old=0x00000808 wrote=0x00000040 OK
 
 **C2-a 通过，可进入 C2-b（FPM 使能 + ring/描述符）。**
 
+
+
+## 2026-10-30：C2-b —— FPM 使能 + RX buffer（run #89）
+
+`compat/rdp_c2.c` 扩展（仍 `rdp_c2=1`）：C2-a 的 7 个寄存器之后，
+1) `QM+0x00c` bit0 置 1 使能 FPM（`0x00100188 → 0x00100189`，读回一致）；
+2) 8 个 RX buffer（2 KiB）按 §5.3 格式 1 建描述符（`bswap32(buf)|0x40000`、
+   偏移大端），8/8 回读校验通过；
+3) 8 项 CPU ring 描述符（16 B，物理地址大端）在本地内存构建但**未写硬件**；
+4) 0x82803000 只读探测得 `0101f300 ...`，与 RNR_REGS 同款 → 不是 ring 表。
+
+设备：`lan2` carrier=1 保持；无 panic（uptime 1866→1885s）；rmmod 后
+FPM_CTRL 恢复 `0x00100188`、7 个寄存器恢复、三块内存释放。
+`.ko` 631,788 B、未决 0。
+
+**遗留**：CPU ring 硬件表基址 = `0x3000 + rdp_runner_core_addr[0]`，
+后者是 rdpa.ko 运行时 .bss；现场 0x82803000 不像表，C3 前需先定位。
+
