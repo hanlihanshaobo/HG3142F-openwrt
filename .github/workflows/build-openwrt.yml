@@ -212,11 +212,13 @@ jobs:
           rm -rf "$PROBE"; mkdir -p "$PROBE"
           printf '%s\n' \
             'obj-m := bcm_enet.o' \
-            'bcm_enet-y := enet.o port.o runner.o dt_parsing.o g9991.o mux_index.o phy_drv_pon.o sw_common.o port_types.o' \
+            'bcm_enet-y := enet.o port.o runner.o dt_parsing.o g9991.o mux_index.o phy_drv_pon.o sw_common.o port_types.o phy_drv_compat.o' \
             > "$PROBE/Kbuild"
           for f in enet port runner dt_parsing g9991 mux_index phy_drv_pon sw_common port_types; do
             ln -sf "$ENET/$f.c" "$PROBE/$f.c"
           done
+          # 我们自己补的 PHY 框架实现（原厂只有 prebuilt phy_drv.o），一起编进来
+          ln -sf "$COMPAT/phy_drv_compat.c" "$PROBE/phy_drv_compat.c"
           GCC=$(find "$TOP/sources/openwrt/staging_dir" -path '*toolchain-*/bin/*-gcc' 2>/dev/null | head -1)
           if [ -z "$GCC" ]; then echo "cross gcc not found, skip"; exit 0; fi
           export PATH="$(dirname "$GCC"):$PATH"
@@ -252,6 +254,14 @@ jobs:
           grep -nE "error:|fatal error:" probe_full.txt | head -60 || true
           echo "=== error count ==="
           grep -cE "error:|fatal error:" probe_full.txt || true
+          # 编出来就直接把 .ko 拿出来（不用等 OpenWrt 包被 .config 选中）
+          if [ -f "$PROBE/bcm_enet.ko" ]; then
+            mkdir -p out && cp -v "$PROBE/bcm_enet.ko" out/ && \
+              echo "bcm_enet.ko: $(stat -c%s out/bcm_enet.ko) 字节" && \
+              modinfo out/bcm_enet.ko 2>/dev/null | head -5 || true
+          else
+            echo "没有 bcm_enet.ko（编译失败）"
+          fi
           # 探针日志必须进 artifacts：只有 task 日志的话，没有 gh CLI 就完全看不到
           mkdir -p out && cp probe_full.txt out/probe_enet_sdk.log || true
 
