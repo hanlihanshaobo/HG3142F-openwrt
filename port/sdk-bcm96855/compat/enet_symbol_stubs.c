@@ -453,8 +453,22 @@ static int runner_port_init_stub(enetx_port_t *port)
 	return -1;
 }
 
+/*
+ * port_create() 会对每个非 detect 端口调用 parent_sw->s.ops->port_id_on_sw()。
+ * run #72 的 panic 就是这里为空（PC=0, LR=port_type_resolve+0x3c）。
+ * 按 DT 的 reg 直接映射成 Runner 端口 0..N。
+ */
+static int runner_sw_port_id_on_sw(port_info_t *port_info, int *port_id,
+				   port_type_t *port_type)
+{
+	*port_id = port_info->port;
+	*port_type = PORT_TYPE_RUNNER_PORT;
+	return 0;
+}
+
 sw_ops_t port_runner_sw = {
 	.init = runner_sw_init_stub,
+	.port_id_on_sw = runner_sw_port_id_on_sw,
 };
 
 port_ops_t port_runner_port = {
