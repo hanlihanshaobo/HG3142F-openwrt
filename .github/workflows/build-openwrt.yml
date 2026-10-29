@@ -361,7 +361,7 @@ jobs:
           rm -rf "$PROBE"; mkdir -p "$PROBE"
           printf '%s\n' \
             'obj-m := bcm_enet.o' \
-            'bcm_enet-y := enet.o port.o runner.o dt_parsing.o g9991.o mux_index.o phy_drv_pon.o sw_common.o port_types.o phy_drv_compat.o enet_stubs.o enet_framework_stubs.o bcm_chip_arch_compat.o bcmkernel_stubs.o enet_symbol_stubs.o unimac_mac.o' \
+            'bcm_enet-y := enet.o port.o runner.o dt_parsing.o g9991.o mux_index.o phy_drv_pon.o sw_common.o port_types.o phy_drv_compat.o enet_stubs.o enet_framework_stubs.o bcm_chip_arch_compat.o bcmkernel_stubs.o enet_symbol_stubs.o unimac_mac.o rdp_probe.o' \
             > "$PROBE/Kbuild"
           for f in enet port runner dt_parsing g9991 mux_index phy_drv_pon sw_common port_types; do
             ln -sf "$ENET/$f.c" "$PROBE/$f.c"
@@ -374,6 +374,7 @@ jobs:
           ln -sf "$COMPAT/bcmkernel_stubs.c" "$PROBE/bcmkernel_stubs.c"
           ln -sf "$COMPAT/enet_symbol_stubs.c" "$PROBE/enet_symbol_stubs.c"
           ln -sf "$COMPAT/unimac_mac.c" "$PROBE/unimac_mac.c"
+          ln -sf "$COMPAT/rdp_probe.c" "$PROBE/rdp_probe.c"
           GCC=$(find "$TOP/sources/openwrt/staging_dir" -path '*toolchain-*/bin/*-gcc' 2>/dev/null | head -1)
           if [ -z "$GCC" ]; then echo "cross gcc not found, skip"; exit 0; fi
           export PATH="$(dirname "$GCC"):$PATH"

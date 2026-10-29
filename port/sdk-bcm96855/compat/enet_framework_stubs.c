@@ -27,9 +27,16 @@
 #include "mac_drv.h"
 #include "phy_drv_compat.h"
 
+extern void rdp_probe_run(void);
+
 int mac_drivers_set(void)
 {
-	int rc = phy_drv_compat_init();
+	int rc;
+
+	/* C1：只在 insmod 带 rdp_probe=1 时执行（只读，不写寄存器） */
+	rdp_probe_run();
+
+	rc = phy_drv_compat_init();
 
 	if (rc)
 		pr_err("bcm_enet: phy compat init failed (%d)\n", rc);
