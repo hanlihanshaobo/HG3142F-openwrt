@@ -560,3 +560,23 @@ FPM_CTRL 恢复 `0x00100188`、7 个寄存器恢复、三块内存释放。
 **遗留**：CPU ring 硬件表基址 = `0x3000 + rdp_runner_core_addr[0]`，
 后者是 rdpa.ko 运行时 .bss；现场 0x82803000 不像表，C3 前需先定位。
 
+
+
+## 2026-10-30：C3 ring 表落地（run #90）
+
+分支 6 给出 ring 表基址 `0x82703000`（`rdp_runner_core_addr[0]=0x82700000`
++ `RDD_CPU_RING_DESCRIPTORS_TABLE_ADDRESS_ARR[0]=0x3000`）。本轮：
+
+- 只读探测（`rdp_c3=16`）：`0x82700000` 可读；`0x82703000` 8×16 B 全 0；
+  feed/recycle/RXQ buf/data buf type 全 0；`0x82803000` 为 `0101f300`
+  （RNR 寄存器，禁写）。
+- 写入（`rdp_c3=1 rdp_c3_ring_base=0x82703000`）：8 项 16 B 全部写入、
+  **8/8 回读一致**（ring[0] = `00000100 00001000 00004b03 00000000`，
+  ring[7] = `00000107 00001000 00704b03 ...`，phys 0x034b0000+i*0x1000）。
+- `lan2` carrier=1 保持；无 panic；`rmmod` 后 `ring table[0..7] restored`，
+  再探测 `0x82703000` 回到全 0。
+- `.ko` 657,780 B、未决 0。
+
+**下一步 C3：** `rdp_c3=3`（ring + BBH_TX）验证 `+0x90c=0x3f`、
+`+0x03c=0x05247c5e`；DSPTCHR/RNR 仍等分支 6 给值。
+
