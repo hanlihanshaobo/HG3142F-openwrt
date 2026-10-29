@@ -33,6 +33,8 @@
 #include <linux/jiffies.h>
 #include <linux/string.h>
 #include <linux/errno.h>
+#include <linux/io.h>
+#include <linux/delay.h>
 #include <linux/mii.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
@@ -731,6 +733,141 @@ int phy_priv_fun(phy_dev_t *phy_dev, int op, ...)
 }
 
 /* ------------------------------------------------------------------ */
+/*  MDIO_V1 内部总线（C22）                                             */
+/*                                                                     */
+/*  寄存器布局来自 SDK 的 mdio_drv_common.c（6855/6856/6878 同一套）：  */
+/*    base+0x00: CMD    [15:0]data [20:16]reg [25:21]phy                */
+/*                      [27:26]op(1=w22,2=r22) [28]fail [29]busy       */
+/*    base+0x04: CFG    [0]clause(1=22) [11:4]clkdiv [13]free-run      */
+/*  DTS 里 mdio1 节点是 <0xff802060 0x10>；时钟分频由 bootloader 设好   */
+/*  （U-Boot 日志 "MDIO Clock Divider Value: 12"），这里只置 clause/    */
+/*  free-run，不动分频。只做 C22 读写，失败一律返回错误码。             */
+/* ------------------------------------------------------------------ */
+
+#define MDIO_V1_CMD_REG		0x00
+#define MDIO_V1_CFG_REG		0x04
+#define MDIO_V1_BUSY		(1u << 29)
+#define MDIO_V1_FAIL		(1u << 28)
+#define MDIO_V1_OP_R22		(2u << 26)
+#define MDIO_V1_OP_W22		(1u << 26)
+#define MDIO_V1_TIMEOUT_US	2000
+
+static void __iomem *mdio_v1_base;
+static DEFINE_SPINLOCK(mdio_v1_lock);
+
+static int mdio_v1_wait_ready(uint32_t *cmd)
+{
+	int retry = MDIO_V1_TIMEOUT_US;
+
+	do {
+		*cmd = readl(mdio_v1_base + MDIO_V1_CMD_REG);
+		if (!(*cmd & MDIO_V1_BUSY))
+			break;
+		udelay(10);
+	} while (--retry);
+
+	if (!retry)
+		return -ETIMEDOUT;
+
+	if (*cmd & MDIO_V1_FAIL)
+		return -EIO;
+
+	return 0;
+}
+
+static void mdio_v1_set_c22(void)
+{
+	uint32_t cfg = readl(mdio_v1_base + MDIO_V1_CFG_REG);
+
+	cfg |= (1u << 0);	/* clause 22 */
+	cfg |= (1u << 13);	/* free run clock */
+	writel(cfg, mdio_v1_base + MDIO_V1_CFG_REG);
+}
+
+static int mdio_v1_c22_read(uint32_t addr, uint16_t reg, uint16_t *val)
+{
+	uint32_t cmd;
+	int rc;
+
+	if (!mdio_v1_base || !val)
+		return -ENODEV;
+
+	spin_lock_bh(&mdio_v1_lock);
+	mdio_v1_set_c22();
+
+	cmd = MDIO_V1_OP_R22 | ((addr & 0x1f) << 21) |
+	      ((reg & 0x1f) << 16) | MDIO_V1_BUSY;
+	writel(cmd, mdio_v1_base + MDIO_V1_CMD_REG);
+
+	rc = mdio_v1_wait_ready(&cmd);
+	if (!rc)
+		*val = cmd & 0xffff;
+	spin_unlock_bh(&mdio_v1_lock);
+
+	return rc;
+}
+
+static int mdio_v1_c22_write(uint32_t addr, uint16_t reg, uint16_t val)
+{
+	uint32_t cmd;
+	int rc;
+
+	if (!mdio_v1_base)
+		return -ENODEV;
+
+	spin_lock_bh(&mdio_v1_lock);
+	mdio_v1_set_c22();
+
+	cmd = MDIO_V1_OP_W22 | ((addr & 0x1f) << 21) |
+	      ((reg & 0x1f) << 16) | (val & 0xffff) | MDIO_V1_BUSY;
+	writel(cmd, mdio_v1_base + MDIO_V1_CMD_REG);
+
+	rc = mdio_v1_wait_ready(&cmd);
+	spin_unlock_bh(&mdio_v1_lock);
+
+	return rc;
+}
+
+static bus_drv_t phy_compat_mdio_v1 = {
+	.c22_read = mdio_v1_c22_read,
+	.c22_write = mdio_v1_c22_write,
+	.bus_type = BUS_TYPE_MDIO_V1_INT,
+};
+
+static int mdio_v1_probe_dt(void)
+{
+	struct device_node *np;
+	struct resource res;
+	int rc = -ENODEV;
+
+	np = of_find_compatible_node(NULL, NULL, "brcm,mdio1");
+	if (!np)
+		np = of_find_compatible_node(NULL, NULL, "brcm,mdio5");
+	if (!np) {
+		pr_err("bcm-phy: no mdio1/mdio5 node, PHY link stays down\n");
+		return -ENODEV;
+	}
+
+	if (!of_address_to_resource(np, 0, &res)) {
+		mdio_v1_base = ioremap(res.start, resource_size(&res));
+		if (mdio_v1_base) {
+			pr_info("bcm-phy: MDIO_V1 at 0x%llx cfg=0x%08x, C22 polling\n",
+				(unsigned long long)res.start,
+				readl(mdio_v1_base + MDIO_V1_CFG_REG));
+			rc = 0;
+		} else {
+			pr_err("bcm-phy: ioremap mdio failed\n");
+			rc = -ENOMEM;
+		}
+	} else {
+		pr_err("bcm-phy: mdio node has no reg\n");
+	}
+
+	of_node_put(np);
+	return rc;
+}
+
+/* ------------------------------------------------------------------ */
 /*  初始化 / 退出（由 bcm_enet.ko 的 module_init 调用）                  */
 /* ------------------------------------------------------------------ */
 
@@ -754,6 +891,13 @@ int phy_drv_compat_init(void)
 	if (!phy_drv_table[PHY_TYPE_6856_SGMII])
 		phy_drv_table[PHY_TYPE_6856_SGMII] = &phy_drv_compat_sgmii;
 	mutex_unlock(&phy_drv_lock);
+
+	/*
+	 * MDIO 总线接不上不阻塞 probe：phy_bus_read() 会退化成 no-op，
+	 * 载体状态保持 down，netdev 仍然可以正常建出来。
+	 */
+	if (!mdio_v1_probe_dt())
+		phy_compat_set_bus(&phy_compat_mdio_v1);
 
 	return 0;
 }
@@ -798,4 +942,10 @@ void phy_drv_compat_exit(void)
 
 	destroy_workqueue(phy_wq);
 	phy_wq = NULL;
+
+	phy_compat_set_bus(NULL);
+	if (mdio_v1_base) {
+		iounmap(mdio_v1_base);
+		mdio_v1_base = NULL;
+	}
 }

@@ -474,6 +474,28 @@ static int runner_port_mtu_set_stub(enetx_port_t *port, int mtu)
 }
 
 /*
+ * ndo_open → enet_open() → port_open() → ops->open()。
+ * 这里立刻读一次 PHY 状态并触发 link_change 回调（phy_link_change_cb
+ * 负责 netif_carrier_on/off），这样 `ip link set lan0 up` 后不用等
+ * 下一次 200ms 轮询。读失败就保持现状，轮询会继续跟踪。
+ */
+static void runner_port_open_stub(enetx_port_t *port)
+{
+	phy_dev_t *phy = port->p.phy;
+
+	if (!phy || !phy->phy_drv)
+		return;
+
+	if (phy_dev_read_status(phy) == 0)
+		phy_dev_link_change_notify(phy);
+}
+
+static void runner_port_stop_stub(enetx_port_t *port)
+{
+	(void)port;
+}
+
+/*
  * port_create() 会对每个非 detect 端口调用 parent_sw->s.ops->port_id_on_sw()。
  * run #72 的 panic 就是这里为空（PC=0, LR=port_type_resolve+0x3c）。
  * 按 DT 的 reg 直接映射成 Runner 端口 0..N。
@@ -512,5 +534,7 @@ port_ops_t port_runner_port = {
 	.init = runner_port_init_stub,
 	.uninit = runner_port_uninit_stub,
 	.mtu_set = runner_port_mtu_set_stub,
+	.open = runner_port_open_stub,
+	.stop = runner_port_stop_stub,
 };
 
