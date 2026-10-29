@@ -361,9 +361,9 @@ jobs:
           rm -rf "$PROBE"; mkdir -p "$PROBE"
           printf '%s\n' \
             'obj-m := bcm_enet.o' \
-            'bcm_enet-y := enet.o port.o runner.o dt_parsing.o g9991.o mux_index.o phy_drv_pon.o sw_common.o port_types.o phy_drv_compat.o enet_stubs.o enet_framework_stubs.o bcm_chip_arch_compat.o bcmkernel_stubs.o enet_symbol_stubs.o runner_with_switch.o' \
+            'bcm_enet-y := enet.o port.o runner.o dt_parsing.o g9991.o mux_index.o phy_drv_pon.o sw_common.o port_types.o phy_drv_compat.o enet_stubs.o enet_framework_stubs.o bcm_chip_arch_compat.o bcmkernel_stubs.o enet_symbol_stubs.o' \
             > "$PROBE/Kbuild"
-          for f in enet port runner dt_parsing g9991 mux_index phy_drv_pon sw_common port_types runner_with_switch; do
+          for f in enet port runner dt_parsing g9991 mux_index phy_drv_pon sw_common port_types; do
             ln -sf "$ENET/$f.c" "$PROBE/$f.c"
           done
           # 我们自己补的 PHY 框架实现（原厂只有 prebuilt phy_drv.o），一起编进来

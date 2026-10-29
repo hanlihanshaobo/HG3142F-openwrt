@@ -429,3 +429,35 @@ int enetxapi_queue_need_reschedule(enetx_channel *chan, int q_id)
 	(void)chan; (void)q_id;
 	return 0;
 }
+
+/* ================================================================== */
+/*  9) Runner switch/port ops（runner_with_switch.c 未编）             */
+/*                                                                     */
+/*  port_types.c 在 -DRUNNER 下把 PORT_TYPE_RUNNER_SW/PORT 指向这两个表。 */
+/*  真实表在 runner_with_switch.c，但它依赖本 GPL 包没有的                 */
+/*  rdpa_cpu_tx_extra_info_t / sf2_sw / port_runner_sw_config_trunk 等，  */
+/*  编不过。这里给最小表：init 直接返回 -1，sw_init 会干净失败。          */
+/*  TODO: 等 rdpa 头/实现补齐后换成 runner_with_switch.c 的真表。         */
+/* ================================================================== */
+
+static int runner_sw_init_stub(enetx_port_t *sw)
+{
+	(void)sw;
+	pr_err("bcm_enet: runner switch init not implemented (rdpa missing)\n");
+	return -1;
+}
+
+static int runner_port_init_stub(enetx_port_t *port)
+{
+	(void)port;
+	return -1;
+}
+
+sw_ops_t port_runner_sw = {
+	.init = runner_sw_init_stub,
+};
+
+port_ops_t port_runner_port = {
+	.init = runner_port_init_stub,
+};
+

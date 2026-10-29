@@ -48,7 +48,7 @@ BDMF_DIR:=$(SDK_DIR)/sdk/bcmdrivers/opensource/char/bdmf/impl1
 # bcm_chip_arch_compat.o 补厂商生成文件 drivers/bcm_chip_arch.c（GPL 包没带）
 ENET_OBJS:=enet port runner dt_parsing g9991 mux_index phy_drv_pon sw_common port_types \
            phy_drv_compat enet_stubs enet_framework_stubs bcm_chip_arch_compat bcmkernel_stubs \
-           enet_symbol_stubs runner_with_switch
+           enet_symbol_stubs
 
 define Build/Prepare
 	$(INSTALL_DIR) $(PKG_BUILD_DIR)/compat $(PKG_BUILD_DIR)/shim/linux
