@@ -134,4 +134,25 @@ module build 开始 189s / 编译+链接完成 237s。即内核树缓存命中�
 
 下一步按这份清单补 fail-closed 桩（返回错误/NULL，避免假成功），再 insmod。
 
+### 补桩结果（run #64）
+
+新增 `compat/enet_symbol_stubs.c`，46 个符号全部有实现/占位：
+- **真实现 3 个**：`dt_get_phy_mode_mii_type`（解析 DT `phy-mode`）、
+  `port_by_netdev`（遍历 `root_sw`）、`skb_header_alloc`（`alloc_skb`）
+- **数据 4 个**：`unit_port_array`、`unit_port_oam_idx_array`（-1）、
+  `eee_enabled=0`、`extsw_reg_config`（空自旋锁）
+- **fail-closed 39 个**：rdpa 查询返回 -1 且不写输出参数、`rdpa_*_drv` 返回 NULL；
+  bdmf attrelem/new/link/destroy 返回 -1；mac/runner/PHY 入口返回 -1/NULL；
+  回收与中断类 void no-op（会泄漏，仅探测期）
+
+结果（module-only #64，212 秒）：
+```
+bcm_enet.ko            531,848 B
+undefined_symbols.txt  0 行   ← 已无内核未导出符号
+undefined_symbols_raw  96 行  ← 全是 vmlinux 导出（kmalloc/printk/of_* 等）
+```
+即 **insmod 不会再因 Unknown symbol 被拒**，可以进入设备侧 probe 验证。
+预期 probe 会在第一个 `rdpa_system_get()`/-1 处停下（fail-closed 设计）。
+
+
 
