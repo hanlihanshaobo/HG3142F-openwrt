@@ -32,6 +32,8 @@
 #include <linux/gfp.h>
 #include <linux/io.h>
 #include <linux/swab.h>
+#include <linux/workqueue.h>
+#include <linux/jiffies.h>
 #include <linux/moduleparam.h>
 #include <asm/memory.h>
 
@@ -120,6 +122,11 @@ static int c3_rnr_written;
 
 static u32 c3_rx_save[C3_RX_MAX][4];
 static int c3_rx_written;
+
+/* ring 写指针观察（1s 一次，20 次；用于 mask=15 现场验证） */
+static struct delayed_work c3_watch;
+static int c3_watch_ticks;
+static int c3_watch_started;
 
 /* ------------------------------------------------------------------ */
 /* 只读探测                                                            */
@@ -537,12 +544,68 @@ static void c3_restore_bbh_rx(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* ring 写指针观察：0x82703000 + id*0x10 + 6（大端 u16）                 */
+/* ------------------------------------------------------------------ */
+
+static void c3_watch_fn(struct work_struct *work)
+{
+	void __iomem *p;
+	int i;
+
+	(void)work;
+
+	if (!rdp_c3_ring_base)
+		return;
+
+	p = ioremap(rdp_c3_ring_base, C3_RING_COUNT * 0x10);
+	if (!p)
+		return;
+
+	pr_info("C3 watch[%d] wrptr:", c3_watch_ticks);
+	for (i = 0; i < C3_RING_COUNT; i++) {
+		u32 w1 = readl(p + i * 0x10 + 0x4);
+		u16 be = (u16)(w1 >> 16);	/* +0x06 的大端 u16 */
+		u16 ptr = swab16(be);
+
+		pr_cont(" r%d=%04x", i, ptr);
+	}
+	pr_cont("\n");
+	iounmap(p);
+
+	if (++c3_watch_ticks < 20)
+		queue_delayed_work(system_wq, &c3_watch,
+				   msecs_to_jiffies(1000));
+}
+
+static void c3_watch_start(void)
+{
+	if (c3_watch_started || !rdp_c3_ring_base)
+		return;
+
+	INIT_DELAYED_WORK(&c3_watch, c3_watch_fn);
+	c3_watch_ticks = 0;
+	c3_watch_started = 1;
+	queue_delayed_work(system_wq, &c3_watch, msecs_to_jiffies(1000));
+}
+
+static void c3_watch_stop(void)
+{
+	if (!c3_watch_started)
+		return;
+
+	cancel_delayed_work_sync(&c3_watch);
+	c3_watch_started = 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* 入口 / 恢复                                                          */
 /* ------------------------------------------------------------------ */
 
 void rdp_c3_restore(void)
 {
 	void __iomem *p;
+
+	c3_watch_stop();
 
 	c3_restore_bbh_rx();
 	c3_restore_rnr();
@@ -601,4 +664,8 @@ void rdp_c3_run(void)
 		pr_info("C3: done (ring=%d bbh_tx=%d dsp=%d rnr/rx=%d)\n",
 			!!(rdp_c3 & C3_RING_BIT), !!(rdp_c3 & C3_BBH_BIT),
 			!!(rdp_c3 & C3_DSP_BIT), !!(rdp_c3 & C3_RNR_BIT));
+
+	/* ring 写指针观察：insmod 返回后每秒打印，持续 20s */
+	if (!rc && (rdp_c3 & C3_RING_BIT))
+		c3_watch_start();
 }
