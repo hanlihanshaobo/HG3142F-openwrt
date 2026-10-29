@@ -70,7 +70,7 @@ define Build/Prepare
 	# runner.c / runner_common.h 里的 switchdev 原型也要一起关（否则
 	# 'struct switchdev_attr declared inside parameter list' 被 -Werror 拦下）
 	# port.c 的 port_init 失败会 BUG()（panic）；bring-up 阶段改为继续返回
-	sed -i 's|^        BUG();.*|        /* compat: no BUG on port init failure */|' \
+	sed -i 's|^        BUG();.*|        return rc;|' \
 		$(PKG_BUILD_DIR)/port.c
 	sed -i 's/#if defined(CONFIG_NET_SWITCHDEV)/#if 0/; s/#ifdef CONFIG_NET_SWITCHDEV/#if 0/' \
 		$(PKG_BUILD_DIR)/enet.c $(PKG_BUILD_DIR)/port.h $(PKG_BUILD_DIR)/g9991.c \

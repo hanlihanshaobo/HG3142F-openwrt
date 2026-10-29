@@ -421,8 +421,34 @@ static struct platform_driver of_platform_enet_driver = {
     .probe = enet_probe,
 };
 
+/* compat: 原厂从不注销 platform driver，模块 rmmod 后驱动仍留在 platform bus 上，
+ * 下一次 insmod 会拿到 -EBUSY（"Driver 'of_bcmenet' is already registered"），
+ * 然后 bcm_enet_init 的错误路径在 root_sw==NULL 时 panic。这里记录注册状态，
+ * 让模块卸载/初始化失败时能对称地注销。 */
+static int enet_platform_driver_registered;
+
 int register_enet_platform_device(void)
 {
-    return platform_driver_register(&of_platform_enet_driver);
+    int rc;
+
+    if (enet_platform_driver_registered)
+        return 0;
+
+    rc = platform_driver_register(&of_platform_enet_driver);
+    if (rc)
+        enet_err("platform_driver_register failed (rc=%d)\n", rc);
+    else
+        enet_platform_driver_registered = 1;
+
+    return rc;
 };
+
+void unregister_enet_platform_device(void)
+{
+    if (!enet_platform_driver_registered)
+        return;
+
+    enet_platform_driver_registered = 0;
+    platform_driver_unregister(&of_platform_enet_driver);
+}
 

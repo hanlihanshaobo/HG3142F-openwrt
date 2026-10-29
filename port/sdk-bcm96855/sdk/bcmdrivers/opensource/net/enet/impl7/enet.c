@@ -76,6 +76,7 @@ extern const struct ethtool_ops enet_ethtool_ops;
 
 #ifdef ENET_DT
 int register_enet_platform_device(void);
+void unregister_enet_platform_device(void);
 #endif
 
 #if defined(BCM_PKTFWD) && defined(BCM_PKTQUEUE) && !defined(CONFIG_BCM_PON)
@@ -2292,7 +2293,10 @@ static void bcm_enet_exit(void)
 
     enet_proc_exit();
 
-    if (root_sw->dev)
+    /* compat: 初始化可能在中途失败（例如 platform driver 注册失败），
+     * 此时 root_sw / enetx_channels 都还是 NULL。原厂代码无条件解引用，
+     * 会让一次干净的 -EBUSY 变成 kernel panic。 */
+    if (root_sw && root_sw->dev)
         kerSysDeregisterDyingGaspHandler(root_sw->dev->name);
 
 #if defined(CONFIG_BCM_LOG)
@@ -2314,14 +2318,29 @@ static void bcm_enet_exit(void)
     enet_swqueue_fini();
 #endif /* ENET_SWQUEUE */
 
-    enetxapi_queues_uninit(&enetx_channels);
+    /* compat: 同上，初始化早期失败时 channels 尚未创建 */
+    if (enetx_channels)
+    {
+        enetxapi_queues_uninit(&enetx_channels);
+        enetx_channels = NULL;   /* compat: 允许 exit 被调用两次 */
+    }
     rtnl_lock();
     sw_free(&root_sw);
     rtnl_unlock();
 
     enet_err("ENET system destructed...\n");
 }
-module_exit(bcm_enet_exit);
+
+/* compat: module_exit 需要先把 platform driver 注销，否则 rmmod 之后
+ * of_bcmenet 仍留在 platform bus 上，下一次 insmod 会 -EBUSY。 */
+static void bcm_enet_module_exit(void)
+{
+#ifdef ENET_DT
+    unregister_enet_platform_device();
+#endif
+    bcm_enet_exit();
+}
+module_exit(bcm_enet_module_exit);
 
 int bcm_enet_init_post(void)
 {
@@ -2417,9 +2436,10 @@ int bcm_enet_init_post(void)
 exit:
     if (rc)
     {
-        enet_err("Failed to inititialize, exiting\n");
+        enet_err("Failed to inititialize, exiting (rc=%d)\n", rc);
         bcm_enet_exit();
-        BUG();
+        /* compat: 原厂这里 BUG()，bring-up 阶段改成把错误返回给 insmod，
+         * 否则任何 probe 失败都会连带 panic 并看不到完整日志。 */
     }
 
     return rc;
@@ -2485,9 +2505,13 @@ int __init bcm_enet_init(void)
 exit:
     if (rc)
     {
-        enet_err("Failed to inititialize, exiting\n");
+        enet_err("Failed to inititialize, exiting (rc=%d)\n", rc);
+#ifdef ENET_DT
+        /* compat: 反向注销 driver，避免下一次 insmod 拿到 -EBUSY */
+        unregister_enet_platform_device();
+#endif
         bcm_enet_exit();
-        BUG();
+        /* compat: 原厂这里 BUG()；失败应干净返回，交给 insmod 报错。 */
     }
 
     return rc;

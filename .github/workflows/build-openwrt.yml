@@ -412,7 +412,7 @@ jobs:
           sed -i 's|^    enet_err("ENET system destructed|    phy_drv_compat_exit();\n    enet_err("ENET system destructed|' "$ENET/enet.c" || true
           # 没有 brcm,enet 节点时 has_dt()=0，原厂直接 init_post，root_sw=NULL -> panic
           # port.c 的 port_init 失败会 BUG()（panic）；bring-up 阶段改成继续返回
-          sed -i 's|^        BUG();.*|        /* compat: no BUG on port init failure */|' "$ENET/port.c" || true
+          sed -i 's|^        BUG();.*|        return rc;|' "$ENET/port.c" || true
           sed -i 's|^        rc = bcm_enet_init_post();|        enet_err("no brcm,enet DT node; refuse init"); return -ENODEV;|' "$ENET/enet.c" || true
           export STAGING_DIR="$TOP/sources/openwrt/staging_dir"
           # -k：遇错不停，一轮把 enet/port/runner/... 所有文件的错误全暴露出来

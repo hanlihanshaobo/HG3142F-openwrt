@@ -449,9 +449,27 @@ static int runner_sw_init_stub(enetx_port_t *sw)
 	return 0;
 }
 
+/*
+ * 真 runner 端口 init 会从 RDPA port 对象推出 LAN/WAN 角色。
+ * _assert_class_port_defaults() 要求 port_netdev_role >= 0，否则
+ * port_init() 直接失败。这里按 DT port-cap 推断一个合理值。
+ */
 static int runner_port_init_stub(enetx_port_t *port)
 {
+	if (port->n.port_netdev_role < 0)
+		port->n.port_netdev_role =
+			(port->p.port_cap == PORT_CAP_WAN_ONLY ||
+			 port->p.port_cap == PORT_CAP_WAN_PREFERRED) ?
+			PORT_NETDEV_ROLE_WAN : PORT_NETDEV_ROLE_LAN;
+	return 0;
+}
+
+/* port_mtu_set() 在没有 .mtu_set 时会返回 -1，enet_change_mtu() 于是认为
+ * 改 MTU 失败。compat 模式不碰硬件，直接接受。 */
+static int runner_port_mtu_set_stub(enetx_port_t *port, int mtu)
+{
 	(void)port;
+	(void)mtu;
 	return 0;
 }
 
@@ -468,12 +486,31 @@ static int runner_sw_port_id_on_sw(port_info_t *port_info, int *port_id,
 	return 0;
 }
 
+/*
+ * _sw_free() 在 is_init 时会无条件调用 sw->s.ops->uninit（这里没有判空），
+ * 所以必须给一个真实的 uninit，否则 rmmod 必崩。
+ */
+static int runner_sw_uninit_stub(enetx_port_t *sw)
+{
+	(void)sw;
+	return 0;
+}
+
+static int runner_port_uninit_stub(enetx_port_t *port)
+{
+	(void)port;
+	return 0;
+}
+
 sw_ops_t port_runner_sw = {
 	.init = runner_sw_init_stub,
+	.uninit = runner_sw_uninit_stub,
 	.port_id_on_sw = runner_sw_port_id_on_sw,
 };
 
 port_ops_t port_runner_port = {
 	.init = runner_port_init_stub,
+	.uninit = runner_port_uninit_stub,
+	.mtu_set = runner_port_mtu_set_stub,
 };
 
