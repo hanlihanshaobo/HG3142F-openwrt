@@ -78,3 +78,60 @@ run #56 追加修复：`BDMF_MATTR()` 用函数返回值当数组长度 → VLA�
 `-Wvla-larger-than` 在 6.18 的 `-Werror` 下变成错误。加
 `-Wno-error=vla-larger-than -Wno-error=vla`（运行时长度由 attr 数决定，很小）。
 
+> 更正：GCC 14 不接受 `-Wno-error=vla-larger-than`（参数化警告要求 `=value`），
+> 会直接报 `no option '-Wvla-larger-than'`，run #57 因此全部 .o 未产出。
+> 最终用 `-Wno-vla-larger-than`（关闭整个警告）。
+
+## 九、模块快速通道（module_only）
+
+完整构建约 35-40 分钟，其中 90% 与 bcm_enet 无关。为此给 workflow 加：
+
+1. **内核构建树缓存**（`openwrt-kernel-<lock 哈希>-<bcmbca overlay 哈希>`）
+   - `build_dir/target-*/linux-*/`（内核树、.config、Module.symvers、已编对象）
+   - `staging_dir/target-*/`
+   - 首次保存 1,505 MB；只在完整构建成功或自愈构建成功时保存
+   - 顺带修掉 dl/tc 缓存每次重复写一份的问题（save 前判断 cache-hit），
+     历史重复项清理后仓库缓存 6.9 GB → 1.4 GB
+2. **`workflow_dispatch` 新输入 `module_only`（默认 false）**
+   - 跳过完整 make、镜像导出、发布与三个探针
+   - `make package/bcm-enet/{clean,compile} V=s`（先精确选中
+     `CONFIG_PACKAGE_kmod-bcm-enet=m`；之前用 grep 子串判断会命中
+     `# ... is not set` 注释，导致 0.03 秒空操作）
+   - 缓存未命中时自动跑一次完整构建并保存缓存（自愈）
+   - 产物：`bcm_enet.ko`、`undefined_symbols.txt`（已剔除内核导出符号）、
+     `undefined_symbols_raw.txt`、`module_build.log`、`timing.txt`
+   - artifact 名：`bcm-enet-module-<run>`
+
+### 实测（2026-10-29）
+
+| run | 模式 | 结果 | 耗时 |
+|---|---|---|---|
+| #57 | full | 失败：GCC 不接受 `-Wno-error=vla-larger-than` | — |
+| #58 | full | 成功，内核缓存 1,505 MB 写入 | ~39 min |
+| #59 | module-only | 失败：`./scripts/config` 是目录 | 8 min |
+| #60 | module-only | 失败：包构建缺 rdpa_ag_iptv.h 的 sed | 236 s |
+| #61 | module-only | 失败：modpost 把未决符号当错误 | 208 s |
+| #62 | module-only | **成功，首次产出 bcm_enet.ko（503,420 B）** | 263 s |
+| #63 | module-only | 成功，输出过滤后的未决清单 | 237 s |
+
+module-only 各阶段（#63）：feeds 133s / configure 152s / kernel_config 174s /
+module build 开始 189s / 编译+链接完成 237s。即内核树缓存命中后，**约 4 分钟
+拿到 .ko**（目标 3-6 分钟）。
+
+### 首次链接结果
+
+`KBUILD_MODPOST_WARN=1` 下 modpost 只告警，`.ko` 能产出，但 **有 46 个内核
+未导出的符号**（insmod 会被拒），按类：
+- `rdpa_*` 11 个（cpu/port/filter/system/egress_tm）
+- `bdmf_*` 11 个（attrelem/link/put/new_and_set/sysb_*/type_num_attrs）
+- `unimac/mac`：`mac_dev_del`、`mac_dev_rgmii_attach`
+- Runner 端口/队列：`runner_get_pkt_from_ring`、`runner_ring_create_delete`、
+  `_demux_id_runner_port`、`link_pbit_tc_to_q_to_rdpa_lan_port` 等
+- PHY/DT：`crossbar_phy_dev_active`、`dt_get_phy_mode_mii_type`、
+  `gpiod_get_from_of_node`、`bcmbca_pinctrl_get_pins_by_state`
+- 数据/其他：`unit_port_array`、`unit_port_oam_idx_array`、`eee_enabled`、
+  `extsw_reg_config`、`nbuff_flushfree`、`nbuff_free`、`skb_header_alloc` 等
+
+下一步按这份清单补 fail-closed 桩（返回错误/NULL，避免假成功），再 insmod。
+
+
