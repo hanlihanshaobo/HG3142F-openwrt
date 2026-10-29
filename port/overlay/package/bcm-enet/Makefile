@@ -120,7 +120,7 @@ ENET_DEFS:= \
 	-include $(PKG_BUILD_DIR)/compat/phy_drv_compat.h \
 	-include $(PKG_BUILD_DIR)/compat/nbuff_types_stub.h \
 	-include $(PKG_BUILD_DIR)/compat/nbuff_outer_stub.h \
-	-DCONFIG_BCM_ENET -DENET_DT -DCONFIG_BCM_PON=1 \
+	-DCONFIG_BCM_ENET -DENET_DT -DCONFIG_BCM_PON=1 -DRUNNER \
 	-DCONFIG_BCM_EXT_SWITCH_TYPE=0
 
 # 厂商代码在 6.18 下的告警很多，全部降级为警告而不是错误（与探针一致）
