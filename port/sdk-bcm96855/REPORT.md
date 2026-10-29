@@ -580,3 +580,18 @@ FPM_CTRL 恢复 `0x00100188`、7 个寄存器恢复、三块内存释放。
 **下一步 C3：** `rdp_c3=3`（ring + BBH_TX）验证 `+0x90c=0x3f`、
 `+0x03c=0x05247c5e`；DSPTCHR/RNR 仍等分支 6 给值。
 
+
+
+## 2026-10-30：C3 mask=3 —— ring + BBH_TX（run #90 复用）
+
+`rdp_c2=1 rdp_c3=3 rdp_c3_ring_base=0x82703000`：
+
+- ring 8 项写读回 8/8 OK（phys 0x03470000+i*0x1000）；
+- `BBH_TX[0] +0x90c` old=0x3f → 0x3f，readback OK；
+- `BBH_TX[0] +0x03c` old=0x52047c5e → 0x05247c5e，readback OK；
+- FPM_CTRL 0x00100188 → 0x00100189 OK；lan2 carrier=1；无 panic；
+- rmmod：ring table[0..7] + BBH_TX[0] restored，模块卸载干净。
+
+下一步需要分支 6 提供 DSPTCHR credit 值与 RNR 端口表编码，否则 C3 只能
+停在 ring+BBH。
+
