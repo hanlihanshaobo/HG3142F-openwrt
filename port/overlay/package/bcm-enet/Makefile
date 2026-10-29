@@ -72,7 +72,6 @@ define Build/Prepare
 	# port.c 的 port_init 失败会 BUG()（panic）；bring-up 阶段改为继续返回
 	sed -i 's|^        BUG();.*|        /* compat: no BUG on port init failure */|' \
 		$(PKG_BUILD_DIR)/port.c
-		$(PKG_BUILD_DIR)/port.c
 	sed -i 's/#if defined(CONFIG_NET_SWITCHDEV)/#if 0/; s/#ifdef CONFIG_NET_SWITCHDEV/#if 0/' \
 		$(PKG_BUILD_DIR)/enet.c $(PKG_BUILD_DIR)/port.h $(PKG_BUILD_DIR)/g9991.c \
 		$(PKG_BUILD_DIR)/runner_common.h
