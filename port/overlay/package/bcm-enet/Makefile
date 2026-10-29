@@ -85,8 +85,11 @@ ENET_DEFS:= \
 	-DCONFIG_BCM_ENET -DENET_DT -DCONFIG_BCM_PON=1
 
 # 厂商代码在 6.18 下的告警很多，全部降级为警告而不是错误（与探针一致）
+# cast-function-type：enet.c:533 把 enetxapi_buf_recycle(struct sk_buff*, uint32_t, uint32_t)
+# 强转成 RecycleFuncP，厂商原代码就这样，6.18 把它算成错误——这里降级而不是改类型，
+# 因为 runner.c 里还有另一处签名不同的同类强转，改 typedef 会按下葫芦浮起瓢。
 ENET_NOWARN:= \
-	-Wno-error=ignored-qualifiers -Wno-error=cpp \
+	-Wno-error=ignored-qualifiers -Wno-error=cpp -Wno-error=cast-function-type \
 	-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types \
 	-Wno-error=int-conversion -Wno-error=return-mismatch \
 	-Wno-error=unused-function -Wno-error=discarded-qualifiers \

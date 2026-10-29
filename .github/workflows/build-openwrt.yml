@@ -237,10 +237,11 @@ jobs:
           sed -i 's/#if defined(CONFIG_NET_SWITCHDEV)/#if 0/' "$ENET/enet.c" || true
           # 6.18 的 sk_buff 无 recycle_flags（Broadcom patch 成员），探针阶段注释掉
           sed -i 's|skb->recycle_flags &= SKB_NO_RECYCLE;|/* compat: no recycle_flags in 6.18 */|' "$ENET/enet.c" || true
-          sed -i 's|skb->recycle_flags |= rx_info->extra_skb_flags;|/* compat */|' "$ENET/enet.c" || true
+          sed -i 's#skb->recycle_flags |= rx_info->extra_skb_flags;#/* compat */#' "$ENET/enet.c" || true
           export STAGING_DIR="$TOP/sources/openwrt/staging_dir"
-          make -C "$KDIR" M="$PROBE" ARCH=arm CROSS_COMPILE="$CROSS" \
-               KCFLAGS="$INC -include $COMPAT/enet_compat.h -include $COMPAT/nbuff_types_stub.h -include $COMPAT/nbuff_outer_stub.h -DCONFIG_BCM_ENET -DENET_DT -DCONFIG_BCM_PON=1 -Wno-error=ignored-qualifiers -Wno-error=cpp -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=return-mismatch -Wno-error=unused-function -Wno-error=discarded-qualifiers -Wno-error=missing-prototypes -Wno-error=old-style-declaration -Wno-error=unused-variable -Wno-error=override-init -Wno-error=address" \
+          # -k：遇错不停，一轮把 enet/port/runner/... 所有文件的错误全暴露出来
+          make -k -C "$KDIR" M="$PROBE" ARCH=arm CROSS_COMPILE="$CROSS" \
+               KCFLAGS="$INC -include $COMPAT/enet_compat.h -include $COMPAT/nbuff_types_stub.h -include $COMPAT/nbuff_outer_stub.h -DCONFIG_BCM_ENET -DENET_DT -DCONFIG_BCM_PON=1 -Wno-error=ignored-qualifiers -Wno-error=cpp -Wno-error=cast-function-type -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=return-mismatch -Wno-error=unused-function -Wno-error=discarded-qualifiers -Wno-error=missing-prototypes -Wno-error=old-style-declaration -Wno-error=unused-variable -Wno-error=override-init -Wno-error=address" \
                modules >probe_full.txt 2>&1
           RC=$?
           echo "probe rc=$RC"
