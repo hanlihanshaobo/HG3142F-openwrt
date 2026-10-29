@@ -15,7 +15,8 @@
  *              （credit=0，保留低 20 位阈值），v=0..rdp_c3_dsp_ports-1
  *   bit3 (8)   RNR 全局 enable（0x82800000+0x1000*core bit0=1，RMW）
  *              + BBH_RX 端口（0x82898000+0x400*p：+0x04/+0x30/+0x34/+0x3c）
- *   bit4 (16)  只读探测（0x82700000/0x82703000/0x82702f00/... ），读完即返回
+ *   bit4 (16)  Q_DEST punt 实验：0x828804C0 bit[port]=1、0x82880600 解对应位
+ *   bit5 (32)  只读探测（0x82703000/0x82703870/0x828804C0/0x82880600 ...）
  *
  * 占位参数：
  *   rdp_c3_ring_base=<物理地址>  ring 表基址（16 B 对齐；本轮 0x82703000）
@@ -69,13 +70,18 @@ static uint rdp_c3_rx_ports = 7;
 module_param_named(rdp_c3_rx_ports, rdp_c3_rx_ports, uint, 0444);
 MODULE_PARM_DESC(rdp_c3_rx_ports, "BBH_RX ports p=0..n-1 (default 7)");
 
+static uint rdp_c3_qdest_port = 2;
+module_param_named(rdp_c3_qdest_port, rdp_c3_qdest_port, uint, 0444);
+MODULE_PARM_DESC(rdp_c3_qdest_port, "Q_DEST punt port bit (default 2 = LAN2)");
+
 #define C3_RING_COUNT		8
 #define C3_RING_ENTRIES		8
 #define C3_RING_ENTRY_SIZE	16
 #define C3_RING_BUF_SIZE	4096
 #define C3_RING_DATA_SIZE	(C3_RING_COUNT * C3_RING_BUF_SIZE)
 
-#define C3_PROBE_BIT		16
+#define C3_PROBE_BIT		32	/* bit5：只读探测 */
+#define C3_QDEST_BIT		16	/* bit4：Q_DEST punt 实验 */
 #define C3_RING_BIT		1
 #define C3_BBH_BIT		2
 #define C3_DSP_BIT		4
@@ -88,6 +94,10 @@ MODULE_PARM_DESC(rdp_c3_rx_ports, "BBH_RX ports p=0..n-1 (default 7)");
 
 #define C3_RNR_BASE		0x82800000u
 #define C3_RNR_ENABLE		(1u << 0)
+
+#define C3_QDEST_BASE		0x82880000u
+#define C3_QDEST_REG		0x4c0u	/* 32 位 Q_DEST 位图 */
+#define C3_QDEST_MASK_REG	0x600u	/* 掩码：对应位=1 表示屏蔽 */
 
 #define C3_BBH_RX_BASE		0x82898000u
 #define C3_BBH_RX_STRIDE	0x400u
@@ -122,6 +132,9 @@ static int c3_rnr_written;
 
 static u32 c3_rx_save[C3_RX_MAX][4];
 static int c3_rx_written;
+
+static u32 c3_qdest_save[2];
+static int c3_qdest_written;
 
 /* ring 写指针观察（1s 一次，20 次；用于 mask=15 现场验证） */
 static struct delayed_work c3_watch;
@@ -167,6 +180,8 @@ static void c3_probe(void)
 	c3_dump("RXQ_buf_cfg?", 0x82703870, 4);
 	c3_dump("data_buf_type?", 0x82703a40, 4);
 	c3_dump("RNR_REGS(对照)", 0x82803000, 4);
+	c3_dump("QDEST 0x4c0", 0x828804c0, 4);
+	c3_dump("QDEST 0x600", 0x82880600, 4);
 
 	pr_info("C3 probe: done (no writes)\n");
 }
@@ -544,6 +559,75 @@ static void c3_restore_bbh_rx(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* bit4：Q_DEST punt（只动一个 port 位）                                */
+/* ------------------------------------------------------------------ */
+
+static int c3_write_qdest(void)
+{
+	void __iomem *p;
+	u32 old_dest, old_mask, new_dest, new_mask, rb;
+	u32 bit = 1u << (rdp_c3_qdest_port & 0x1f);
+
+	p = ioremap(C3_QDEST_BASE, 0x1000);
+	if (!p)
+		return -ENOMEM;
+
+	old_dest = readl(p + C3_QDEST_REG);
+	old_mask = readl(p + C3_QDEST_MASK_REG);
+	c3_qdest_save[0] = old_dest;
+	c3_qdest_save[1] = old_mask;
+	c3_qdest_written = 1;
+
+	new_dest = old_dest | bit;
+	writel(new_dest, p + C3_QDEST_REG);
+	rb = readl(p + C3_QDEST_REG);
+	pr_info("C3 QDEST 0x4c0 old=0x%08x wrote=0x%08x readback=0x%08x %s (port=%u bit=0x%08x)\n",
+		old_dest, new_dest, rb, (rb == new_dest) ? "OK" : "MISMATCH",
+		rdp_c3_qdest_port, bit);
+	if (rb != new_dest) {
+		iounmap(p);
+		return -EIO;
+	}
+
+	/* 掩码位=1 表示屏蔽：若原值为 1，则清掉该位 */
+	new_mask = old_mask & ~bit;
+	if (new_mask != old_mask) {
+		writel(new_mask, p + C3_QDEST_MASK_REG);
+		rb = readl(p + C3_QDEST_MASK_REG);
+		pr_info("C3 QDEST 0x600 old=0x%08x wrote=0x%08x readback=0x%08x %s\n",
+			old_mask, new_mask, rb,
+			(rb == new_mask) ? "OK" : "MISMATCH");
+		if (rb != new_mask) {
+			iounmap(p);
+			return -EIO;
+		}
+	} else {
+		pr_info("C3 QDEST 0x600 old=0x%08x unchanged (bit already clear)\n",
+			old_mask);
+	}
+
+	iounmap(p);
+	return 0;
+}
+
+static void c3_restore_qdest(void)
+{
+	void __iomem *p;
+
+	if (!c3_qdest_written)
+		return;
+
+	p = ioremap(C3_QDEST_BASE, 0x1000);
+	if (p) {
+		writel(c3_qdest_save[1], p + C3_QDEST_MASK_REG);
+		writel(c3_qdest_save[0], p + C3_QDEST_REG);
+		iounmap(p);
+	}
+	c3_qdest_written = 0;
+	pr_info("C3: Q_DEST/0x600 restored\n");
+}
+
+/* ------------------------------------------------------------------ */
 /* ring 写指针观察：0x82703000 + id*0x10 + 6（大端 u16）                 */
 /* ------------------------------------------------------------------ */
 
@@ -607,6 +691,7 @@ void rdp_c3_restore(void)
 
 	c3_watch_stop();
 
+	c3_restore_qdest();
 	c3_restore_bbh_rx();
 	c3_restore_rnr();
 	c3_restore_dsptchr();
@@ -654,6 +739,8 @@ void rdp_c3_run(void)
 		rc = c3_write_rnr();
 	if (!rc && (rdp_c3 & C3_RNR_BIT))
 		rc = c3_write_bbh_rx();
+	if (!rc && (rdp_c3 & C3_QDEST_BIT))
+		rc = c3_write_qdest();
 
 	if (rc) {
 		pr_err("C3: failed rc=%d, restoring\n", rc);
@@ -661,9 +748,10 @@ void rdp_c3_run(void)
 		return;
 	}
 	if (rdp_c3 & (C3_RING_BIT | C3_BBH_BIT | C3_DSP_BIT | C3_RNR_BIT))
-		pr_info("C3: done (ring=%d bbh_tx=%d dsp=%d rnr/rx=%d)\n",
+		pr_info("C3: done (ring=%d bbh_tx=%d dsp=%d rnr/rx=%d qdest=%d)\n",
 			!!(rdp_c3 & C3_RING_BIT), !!(rdp_c3 & C3_BBH_BIT),
-			!!(rdp_c3 & C3_DSP_BIT), !!(rdp_c3 & C3_RNR_BIT));
+			!!(rdp_c3 & C3_DSP_BIT), !!(rdp_c3 & C3_RNR_BIT),
+			!!(rdp_c3 & C3_QDEST_BIT));
 
 	/* ring 写指针观察：insmod 返回后每秒打印，持续 20s */
 	if (!rc && (rdp_c3 & C3_RING_BIT))
