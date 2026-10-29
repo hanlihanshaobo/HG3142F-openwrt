@@ -762,6 +762,14 @@ void phy_drv_compat_exit(void)
 	if (!phy_wq)
 		return;
 
+	/* 清掉我们注册的占位驱动，避免模块重新加载后表里留着旧地址 */
+	mutex_lock(&phy_drv_lock);
+	if (phy_drv_table[PHY_TYPE_6846_EGPHY] == &phy_drv_compat_egphy)
+		phy_drv_table[PHY_TYPE_6846_EGPHY] = NULL;
+	if (phy_drv_table[PHY_TYPE_6856_SGMII] == &phy_drv_compat_sgmii)
+		phy_drv_table[PHY_TYPE_6856_SGMII] = NULL;
+	mutex_unlock(&phy_drv_lock);
+
 	/*
 	 * 不能持 compat_lock 调 cancel_delayed_work_sync()：轮询回调里会走
 	 * phy_dev_link_change_notify() → compat_lock，持锁等待会死锁。
