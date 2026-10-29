@@ -491,6 +491,14 @@ static void runner_port_open_stub(enetx_port_t *port)
 	if (!phy || !phy->phy_drv)
 		return;
 
+	/*
+	 * 现场证据（2026-10-29）：BMCR=0x1940 → bit11(POWER DOWN)=1，
+	 * 四个 LAN 口全 NO-CARRIER。原厂 port_generic_open() 会调
+	 * phy_dev_power_set(phy, 1)（清 bit11 + ANRESTART），但我们的
+	 * .open 覆盖了 port_generic_open，必须在这里显式补上。
+	 */
+	phy_dev_power_set(phy, 1);
+
 	/* Spike A 证据：把 PHY ID / BMSR / BMCR 原始值打出来。
 	 * PHY ID 非 0 就说明 MDIO 读通路是通的；BMSR bit2 就是 link。 */
 	rc = phy_bus_read(phy, MII_PHYSID1, &id1);

@@ -183,16 +183,53 @@ static int phy_compat_read_status(phy_dev_t *phy)
 	return 0;
 }
 
+/*
+ * 上电/掉电（对应厂商 mii_power_set）。
+ *
+ * 现场证据（2026-10-29，LAN1 已插线）：insmod 后 4 个 EGPHY 都是
+ * BMCR=0x1940（bit11 POWER DOWN=1）、BMSR=0x79c9（bit2/bit5=0），
+ * 所以 lan0..lan4 全 NO-CARRIER。
+ * 原厂 port_generic_open() 会 phy_dev_power_set(phy, 1)，由 EGPHY 驱动的
+ * .power_set = mii_power_set 清 bit11 并置 ANRESTART；我们的 compat 驱动
+ * 原来没实现 .power_set，phy_dev_power_set() 直接返回 0，PHY 从不上电。
+ */
+#define PHY_BMCR_PDOWN		0x0800
+#define PHY_BMCR_ANRESTART	0x0200
+
+static int phy_compat_power_set(phy_dev_t *phy, int enable)
+{
+	uint16_t bmcr = 0;
+	int rc;
+
+	if (!phy || !phy->bus_drv)
+		return -ENODEV;
+
+	rc = phy_bus_read(phy, MII_BMCR, &bmcr);
+	if (rc)
+		return rc;
+
+	if (enable) {
+		bmcr &= ~PHY_BMCR_PDOWN;
+		bmcr |= PHY_BMCR_ANRESTART;	/* 重新自协商（厂商同款行为） */
+	} else {
+		bmcr |= PHY_BMCR_PDOWN;
+	}
+
+	return phy_bus_write(phy, MII_BMCR, bmcr);
+}
+
 static phy_drv_t phy_drv_compat_egphy = {
 	.phy_type = PHY_TYPE_6846_EGPHY,
 	.name = "EGPHY",
 	.read_status = phy_compat_read_status,
+	.power_set = phy_compat_power_set,
 };
 
 static phy_drv_t phy_drv_compat_sgmii = {
 	.phy_type = PHY_TYPE_6856_SGMII,
 	.name = "SGMII",
 	.read_status = phy_compat_read_status,
+	.power_set = phy_compat_power_set,
 };
 
 /* DTS 里的 phy-type 字符串 → phy_type_t（与厂商 phy dt_parsing 一致） */
