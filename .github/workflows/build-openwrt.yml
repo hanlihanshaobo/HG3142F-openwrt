@@ -56,6 +56,7 @@ jobs:
           echo "mode=$( [ "${{ inputs.module_only }}" = "true" ] && echo module-only || echo full )"
 
       - name: Free disk space and add swap
+        if: ${{ inputs.module_only != true }}
         run: |
           sudo rm -rf /usr/local/lib/android /opt/hostedtoolcache/CodeQL /usr/share/dotnet 2>/dev/null || true
           sudo apt-get purge -y 'dotnet*' 'aspnetcore*' 'llvm-*' 'clang-*' 2>/dev/null || true
@@ -64,6 +65,7 @@ jobs:
           df -h /
 
       - name: Install build dependencies
+        if: ${{ inputs.module_only != true }}
         run: |
           sudo apt-get update
           # 注意：ecj / fastjar 在 Ubuntu 24.04 已移除，不要加回来（会导致 apt exit 100）
@@ -73,6 +75,12 @@ jobs:
             libelf-dev libfuse-dev pkgconf bc time subversion
           sudo apt-get clean
 
+      - name: Install minimal deps (module-only)
+        if: ${{ inputs.module_only }}
+        run: |
+          # 快速通道只做 defconfig + 一个外部模块，不需要整套 OpenWrt 依赖。
+          # scripts/config/conf 要 ncurses 头，内核 Makefile 要 bc。
+          sudo apt-get install -y --no-install-recommends bc libncurses-dev zlib1g-dev libelf-dev
       - name: Prepare OpenWrt source with bcmbca overlay
         run: |
           sh port/scripts/prepare.sh sources/openwrt
@@ -231,9 +239,10 @@ jobs:
 
           # 2) 确保包被选中（注意不能 grep 子串：注释行 "# CONFIG_PACKAGE_... is not set" 也会命中）
           if ! grep -qx 'CONFIG_PACKAGE_kmod-bcm-enet=m' .config; then
-            ./scripts/config --module PACKAGE_kmod-bcm-enet
+            echo 'CONFIG_PACKAGE_kmod-bcm-enet=m' >> .config
             make defconfig >/dev/null
           fi
+          grep -n 'CONFIG_PACKAGE_kmod-bcm-enet' .config | head -3 || true
           if ! grep -qx 'CONFIG_PACKAGE_kmod-bcm-enet=m' .config; then
             echo "::error::CONFIG_PACKAGE_kmod-bcm-enet 仍未选中"
             grep -n 'bcm-enet' tmp/.config-package.in 2>/dev/null | head -5 || true
@@ -244,8 +253,9 @@ jobs:
           time make package/bcm-enet/clean package/bcm-enet/compile V=s 2>&1 | tee ../../module_build.log
           echo "module_build $(date +%s)" >> "$GITHUB_WORKSPACE/timing.marks"
 
-          # 4) 收集产物与日志
+          # 4) 收集产物与日志（先拷日志，失败时也能在 artifact 里看到真实错误）
           mkdir -p ../../out
+          cp ../../module_build.log ../../out/module_build.log 2>/dev/null || true
           KO=$(find build_dir -path '*bcm-enet*/bcm_enet.ko' -type f 2>/dev/null | head -1)
           if [ -n "$KO" ]; then
             cp -v "$KO" ../../out/bcm_enet.ko
@@ -259,9 +269,10 @@ jobs:
             fi
           else
             echo "::error::module-only 未产出 bcm_enet.ko"
+            grep -nE "error:|fatal error:|Error [0-9]+" ../../module_build.log | head -40 || true
+            tail -60 ../../module_build.log || true
             exit 1
           fi
-          cp ../../module_build.log ../../out/module_build.log
           [ -f ../../probe_enet_sdk.log ] && cp ../../probe_enet_sdk.log ../../out/probe_enet_sdk.log || true
 
       - name: Summarize build failure
