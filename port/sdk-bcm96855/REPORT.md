@@ -487,3 +487,26 @@ lan2 carrier=1 / operstate=up
 - 备注：当前 `power_set(1)` 每次 open 都会重启 AN，`ifdown/ifup` 会有
   2-3s 链路抖动；后续可改成「仅当 BMCR bit11 原为 1 时才 ANRESTART」。
 
+
+
+## 2026-10-29：C1 —— RDP 块只读探测（run #85）
+
+可观测通道：串口 COM7（CH340）已恢复可用，C1 日志
+`test_images/c1_probe_20261029_234003.log`；netconsole 不可用
+（6.18.55 未编 netconsole，且无 `/dev/mem`/`devmem`）。
+
+实现：`compat/rdp_probe.c`（`rdp_probe=1` 才执行，只有 `readl`，无
+`writel`），从 `mac_drivers_set()` 最前面调用；run #85 `.ko` 608,624 B、
+未决 0；insmod/rmmod 正常，无 panic。
+
+关键读数：
+- `UBUS_MSTR 0x8289c000[+4]=deadbeef`、`UBUS_SLV 0x828a0000[+0]=deadbeef`、
+  `PSRAM 0x828a2800` 的 `1a2b3c4d/98765432` → §7.1 块地址表现场成立。
+- `FPM 0x82a00000` 全 0、`DQM 0x82c80034` 为 `0xccccdddd` → 未初始化
+  （rdpa.ko 没加载），与 §7.4 的依赖顺序吻合，C2 要补。
+- UNIMAC 6 个实例 `rev=0x100`，基址与 §3.1 逐项一致；MISC `0x828b0000 +
+  0x400*n` 读回 `00000000/00e03fff`。lan2 的 CMD 为 `0x118601d8`
+  （link up 后 cfg/pause 已下发），其余为 `0x018004d8`。
+
+产出：`docs/C-PLAN.md`（C1 表 + C2~C4 分阶段计划，含串口前置条件）。
+
