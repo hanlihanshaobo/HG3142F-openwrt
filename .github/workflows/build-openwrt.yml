@@ -250,6 +250,8 @@ jobs:
           grep -nE "error:|fatal error:" probe_full.txt | head -60 || true
           echo "=== error count ==="
           grep -cE "error:|fatal error:" probe_full.txt || true
+          # 探针日志必须进 artifacts：只有 task 日志的话，没有 gh CLI 就完全看不到
+          mkdir -p out && cp probe_full.txt out/probe_enet_sdk.log || true
 
       - name: Package probe (kmod-bcm-enet)
         if: always()
@@ -275,6 +277,7 @@ jobs:
           tail -40 ../../pkg_enet.log || true
           echo "=== 产出的 .ko / 模块清单 ==="
           ls -l build_dir/target-*/linux-*/bcm-enet*/bcm_enet.ko 2>/dev/null || echo "没有 .ko"
+          mkdir -p ../../out && cp ../../pkg_enet.log ../../out/probe_pkg_enet.log || true
 
       - name: SDK compile probe (bcm_pcie)
         if: always()
