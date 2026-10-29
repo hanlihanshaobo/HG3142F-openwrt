@@ -367,6 +367,14 @@ jobs:
         if: always()
         run: |
           mkdir -p out
+          # bcm_enet.ko：包没进镜像时也要能拿到，方便在设备上 insmod 验证
+          KO=$(find sources/openwrt/build_dir -path '*bcm-enet*/bcm_enet.ko' -type f 2>/dev/null | head -1)
+          if [ -n "$KO" ]; then
+            cp -v "$KO" out/bcm_enet.ko
+            echo "bcm_enet.ko: $(stat -c%s out/bcm_enet.ko) 字节"
+          else
+            echo "!! 没有 bcm_enet.ko（包编译失败或未编译）"
+          fi
           find sources/openwrt/bin/targets -type f \( -name '*.bin' -o -name '*.ubi' -o -name '*.tar' \
             -o -name '*.itb' -o -name 'profiles.json' \) \
             -exec cp -v {} out/ \; || true

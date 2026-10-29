@@ -1,0 +1,15 @@
+# 换行统一走 LF：仓库在 Windows 上编辑、在 Linux 上构建，
+# 任何 CRLF 混进 Makefile / *.sh / *.yml 都会让 CI 报 "missing separator" 之类的怪错。
+* text=auto
+*.sh  text eol=lf
+*.mk  text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Makefile text eol=lf
+Kbuild text eol=lf
+*.c   text eol=lf
+*.h   text eol=lf
+*.dts text eol=lf
+*.dtsi text eol=lf
+*.patch text eol=lf
+*.py  text eol=lf
