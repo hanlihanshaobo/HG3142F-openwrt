@@ -71,7 +71,16 @@ run 54 artifacts（`openwrt-mb4784w-54`）里也确实没有 `bcm_enet.ko`。
 **全部是 ELF64 aarch64**（`e_machine=183`），而 HG3142F 是 armv7l。
 → 这些 .o 一个都不能链接，unimac MAC 驱动必须自己写或换来源。
 
-## 五、下一步
+## 五、本轮 CI（run #55）
+
+- run id `40827364291`，sha `a6498a6`，workflow_dispatch 于 2026-10-29T06:07Z
+- 预期耗时 ~40 分钟（06:07Z 开始，约 06:50Z 前后到 probe 步骤）
+- 该 run 用的是 `a6498a6`；之后的 3 个小提交（`7e43af7` 退出清理、
+  `6421598` switchdev 收敛、`cce080d` 清占位表）**不在 #55 里**，只影响下一轮
+- 看结果：artifacts `openwrt-mb4784w-55` 里的 `probe_enet_sdk.log`，
+  重点看有没有 `LD [M] bcm_enet.ko` 和 `modpost undefined symbols` 段
+
+## 六、下一步
 1. 触发一轮 CI，确认 11 个 .o 全过、`LD [M] bcm_enet.ko` 出现；
 2. 拿 modpost 清单补桩，再 insmod 看 `Unknown symbol` 与 probe 停在哪；
 3. 写最小 unimac MAC 驱动（或找 32 位源码），否则端口解析必然停在
