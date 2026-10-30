@@ -720,6 +720,17 @@ static void c3_diag_dump(int tick)
 				readl(p + 0x700 + i * 4 + 0x4),
 				readl(p + 0x700 + i * 4 + 0x8),
 				readl(p + 0x700 + i * 4 + 0xc));
+		/* §4.8：RMON 计数器在 0x400–0x61c（read-to-clear） */
+		for (i = 0; i < 0x220; i += 0x10)
+			pr_info("C3 MIB[%d] %03x: %08x %08x %08x %08x\n",
+				tick, 0x400 + i,
+				readl(p + 0x400 + i),
+				readl(p + 0x400 + i + 0x4),
+				readl(p + 0x400 + i + 0x8),
+				readl(p + 0x400 + i + 0xc));
+		pr_info("C3 MIB[%d] STATUS=%08x CONTROL=%08x MIBCTRL=%08x\n",
+			tick, readl(p + 0x758), readl(p + 0x740),
+			readl(p + 0x680));
 		iounmap(p);
 	}
 
