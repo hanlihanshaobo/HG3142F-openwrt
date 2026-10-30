@@ -96,8 +96,9 @@ MODULE_PARM_DESC(rdp_c3_qdest_port, "Q_DEST punt port bit (default 2 = LAN2)");
 #define C3_RNR_ENABLE		(1u << 0)
 
 #define C3_QDEST_BASE		0x82880000u
-#define C3_QDEST_REG		0x4c0u	/* 32 位 Q_DEST 位图 */
-#define C3_QDEST_MASK_REG	0x600u	/* 掩码：对应位=1 表示屏蔽 */
+#define C3_QDEST_REG		0x4c0u	/* 32 位 Q_DEST 位图（bit=VIQ） */
+#define C3_QDEST_MASK_REG	0x600u	/* 0x604=0x3f 是 RNR group 掩码，不要动 */
+#define C3_VQEN_REG		0x004u	/* VQ_EN：bit=VIQ 的使能门 */
 
 #define C3_BBH_RX_BASE		0x82898000u
 #define C3_BBH_RX_STRIDE	0x400u
@@ -133,7 +134,8 @@ static int c3_rnr_written;
 static u32 c3_rx_save[C3_RX_MAX][4];
 static int c3_rx_written;
 
-static u32 c3_qdest_save[2];
+static u32 c3_qdest_save[2];	/* [0]=VQ_EN old, [1]=Q_DEST old */
+static u32 c3_vqen_step[2];	/* 中间步骤读回 */
 static int c3_qdest_written;
 
 /* ring 写指针观察（1s 一次，20 次；用于 mask=15 现场验证） */
@@ -180,6 +182,7 @@ static void c3_probe(void)
 	c3_dump("RXQ_buf_cfg?", 0x82703870, 4);
 	c3_dump("data_buf_type?", 0x82703a40, 4);
 	c3_dump("RNR_REGS(对照)", 0x82803000, 4);
+	c3_dump("VQ_EN 0x004", 0x82880004, 4);
 	c3_dump("QDEST 0x4c0", 0x828804c0, 4);
 	c3_dump("QDEST 0x600", 0x82880600, 4);
 
@@ -565,46 +568,60 @@ static void c3_restore_bbh_rx(void)
 static int c3_write_qdest(void)
 {
 	void __iomem *p;
-	u32 old_dest, old_mask, new_dest, new_mask, rb;
+	u32 old_en, old_dest, new_en, new_dest, rb;
 	u32 bit = 1u << (rdp_c3_qdest_port & 0x1f);
 
 	p = ioremap(C3_QDEST_BASE, 0x1000);
 	if (!p)
 		return -ENOMEM;
 
+	old_en = readl(p + C3_VQEN_REG);
 	old_dest = readl(p + C3_QDEST_REG);
-	old_mask = readl(p + C3_QDEST_MASK_REG);
-	c3_qdest_save[0] = old_dest;
-	c3_qdest_save[1] = old_mask;
+	c3_qdest_save[0] = old_en;
+	c3_qdest_save[1] = old_dest;
 	c3_qdest_written = 1;
 
+	pr_info("C3 QDEST baseline: VQ_EN(0x004)=0x%08x Q_DEST(0x4c0)=0x%08x port=%u bit=0x%08x\n",
+		old_en, old_dest, rdp_c3_qdest_port, bit);
+
+	/* ① 先关 VIQ 的使能门 */
+	new_en = old_en & ~bit;
+	writel(new_en, p + C3_VQEN_REG);
+	rb = readl(p + C3_VQEN_REG);
+	pr_info("C3 QDEST step1 VQ_EN 0x004 old=0x%08x wrote=0x%08x readback=0x%08x %s\n",
+		old_en, new_en, rb, (rb == new_en) ? "OK" : "MISMATCH");
+	if (rb != new_en) {
+		iounmap(p);
+		return -EIO;
+	}
+	c3_vqen_step[0] = rb;
+
+	/* ② 改 Q_DEST（bit=VIQ） */
 	new_dest = old_dest | bit;
 	writel(new_dest, p + C3_QDEST_REG);
 	rb = readl(p + C3_QDEST_REG);
-	pr_info("C3 QDEST 0x4c0 old=0x%08x wrote=0x%08x readback=0x%08x %s (port=%u bit=0x%08x)\n",
-		old_dest, new_dest, rb, (rb == new_dest) ? "OK" : "MISMATCH",
-		rdp_c3_qdest_port, bit);
+	pr_info("C3 QDEST step2 0x4c0 old=0x%08x wrote=0x%08x readback=0x%08x %s\n",
+		old_dest, new_dest, rb, (rb == new_dest) ? "OK" : "MISMATCH");
 	if (rb != new_dest) {
 		iounmap(p);
 		return -EIO;
 	}
 
-	/* 掩码位=1 表示屏蔽：若原值为 1，则清掉该位 */
-	new_mask = old_mask & ~bit;
-	if (new_mask != old_mask) {
-		writel(new_mask, p + C3_QDEST_MASK_REG);
-		rb = readl(p + C3_QDEST_MASK_REG);
-		pr_info("C3 QDEST 0x600 old=0x%08x wrote=0x%08x readback=0x%08x %s\n",
-			old_mask, new_mask, rb,
-			(rb == new_mask) ? "OK" : "MISMATCH");
-		if (rb != new_mask) {
-			iounmap(p);
-			return -EIO;
-		}
-	} else {
-		pr_info("C3 QDEST 0x600 old=0x%08x unchanged (bit already clear)\n",
-			old_mask);
+	/* ③ 再开 VIQ 的使能门 */
+	writel(new_en | bit, p + C3_VQEN_REG);
+	rb = readl(p + C3_VQEN_REG);
+	pr_info("C3 QDEST step3 VQ_EN 0x004 wrote=0x%08x readback=0x%08x %s\n",
+		new_en | bit, rb, (rb == (new_en | bit)) ? "OK" : "MISMATCH");
+	if (rb != (new_en | bit)) {
+		iounmap(p);
+		return -EIO;
 	}
+	c3_vqen_step[1] = rb;
+
+	/* 只读 0x604（RNR group 掩码），确认没有动过 */
+	pr_info("C3 QDEST info: 0x600=0x%08x 0x604=0x%08x (read-only)\n",
+		readl(p + C3_QDEST_MASK_REG),
+		readl(p + C3_QDEST_MASK_REG + 4));
 
 	iounmap(p);
 	return 0;
@@ -619,12 +636,14 @@ static void c3_restore_qdest(void)
 
 	p = ioremap(C3_QDEST_BASE, 0x1000);
 	if (p) {
-		writel(c3_qdest_save[1], p + C3_QDEST_MASK_REG);
-		writel(c3_qdest_save[0], p + C3_QDEST_REG);
+		/* 先关门，再恢复 Q_DEST，最后恢复 VQ_EN 原值 */
+		writel(c3_vqen_step[0], p + C3_VQEN_REG);
+		writel(c3_qdest_save[1], p + C3_QDEST_REG);
+		writel(c3_qdest_save[0], p + C3_VQEN_REG);
 		iounmap(p);
 	}
 	c3_qdest_written = 0;
-	pr_info("C3: Q_DEST/0x600 restored\n");
+	pr_info("C3: VQ_EN/Q_DEST restored\n");
 }
 
 /* ------------------------------------------------------------------ */
