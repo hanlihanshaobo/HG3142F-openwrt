@@ -702,3 +702,18 @@ FPM_CTRL 恢复 `0x00100188`、7 个寄存器恢复、三块内存释放。
 - 运行顺序 RNR/BBH_RX → RXQ → Q_DEST；bit6 单独开启且无值时是安全 no-op。
 - 未构建、未上设备、未触发 CI。等分支 6 确认表格式/VIQ2→ring 映射后填默认值。
 
+
+
+## 2026-10-30：BBH_RX SBPM 修复（run #99）—— C 路线冻结
+
+- bit3 目标端口 p=2 按 +0x00→+0x04→+0x30→+0x34→+0x64→+0x3c 写入；读回
+  +0x00=0x00381200、+0x64=0x0f、+0x3c=3 全 OK。`.ko` 695,568 B、
+  md5 63b18a22a88c5baae57b266275bdd669、未决 0。
+- 60s 窗口（PC ping + 2438 帧 UDP 广播）：PM +0x11c 492→2217，与 MIB 0x450 增量
+  +492/+2217 完全一致（2217 包）；MIB 0x458 +239,499 B（≈108 B/包）；
+  PM +0x124 NOSBPMSBN=0（SBPM 不再失败）；+0x100 未随流量变化。
+- ring2 表项 tick0/30/90 一致，95 个写指针采样全 0；lan2 sysfs 统计全 0。
+- 结论：SBPM 丢弃已修，但 CPU ring 仍未写入；下一嫌疑 ring 描述符 byte0 bits[7:3]
+  （环有效位）。C 路线冻结，不再构建/上设备；B1 为主线。
+- 无 panic；rmmod restore 全 OK；设备仅 eth0/br-lan/lo。
+
