@@ -675,3 +675,19 @@ FPM_CTRL 恢复 `0x00100188`、7 个寄存器恢复、三块内存释放。
 - 结论：寄存器层全通，**punt 未被观测到**；下一步 C3-b 诊断（ring dump/UNIMAC CMD/MIB）
   → RXQ 表（0x3870/0x3a40）→ B1（RDP switch 初始化）。
 
+
+
+## 2026-10-30：C3-b 诊断 —— UNIMAC MIB 确认 LAN2 收包（run #97/#98）
+
+- run #97（683,516 B、md5 bb299959…）：dump 0x700–0x77c 发现不是计数器
+  （多为 deaddead），CMD link up 后 0x118601db（TX/RX 使能）；ring 无变化。
+- run #98（685,032 B、md5 b2381757…）：按 §4.8 dump RMON 0x400–0x61c；
+  PC 在 60s 窗口发 2430 帧 UDP 广播（192.168.1.255），MIB：
+  0x408 0x76d→0xf8d、0x450 0xedc→0x1738、0x458 0xd1aa9→0x109f6b（+230,594 B）、
+  0x468 0x574→0xdce；字节/包 ≈107.8 B，与 106 B 广播帧吻合。
+- ring 表项 tick30/90 逐字一致，写指针 r0..r7 95 采样全 0；BBH_RX2/VQ_EN/Q_DEST
+  前后不变；lan2 sysfs 统计全 0（驱动无 RX 上送）。
+- 结论：MAC 确实收包；问题在 punt/RXQ/VIQ 映射（runner ingress 未把包送入
+  CPU ring）。下一步 C3-c：RXQ 表 0x82703870/0x82703a40 + VIQ2→ring；必要时 B1。
+- 无 panic；rmmod 全部 restore；设备已释放。
+
