@@ -660,3 +660,18 @@ FPM_CTRL 恢复 `0x00100188`、7 个寄存器恢复、三块内存释放。
 - run #94 `.ko` 677,396 B、未决 0，未上设备。
 - 下次：LAN2 插对端 + 对端 ping → mask=31 → 看 rx 与 ring2 指针。
 
+
+
+## 2026-10-30：RNR 修复 + mask=63（run #95/#96）
+
+- run #95：RNR 只断言 bit0；现场发现 RNR[1] bit1 被硬件清、RNR[5] bit0 写不进（core 不存在）。
+- run #96：逐核重试、不可写 SKIP、默认 cores=5；新增 `rdp_c3_watch_secs`。
+  `.ko` 678,516 B、未决 0、md5 e03ff8cef02ade1270a4f510fba0c7dc。
+- mask=63 全部读回 OK（ring 8/8、BBH_TX、DSPTCHR 0..4、RNR 0..4 bit0=1、BBH_RX 0..6）；
+  Q_DEST/VQ_EN 三段式 0x1fbf→0x1fbb→0x1fbf、0x4c0 0x1000→0x1004，0x604 未动。
+- watch 70s：写指针 r0..r7 全 0；carrier 20s 起 =1；PC 有线网卡窗口内
+  SentBroadcast +164 / SentMulticast +548，ARP 确有发出；rx_packets=0（驱动无 RX 上送路径）。
+- 无 panic；rmmod 全部 restore（含 VQ_EN/Q_DEST）。
+- 结论：寄存器层全通，**punt 未被观测到**；下一步 C3-b 诊断（ring dump/UNIMAC CMD/MIB）
+  → RXQ 表（0x3870/0x3a40）→ B1（RDP switch 初始化）。
+
