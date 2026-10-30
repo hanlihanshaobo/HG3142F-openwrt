@@ -35,12 +35,13 @@
 #include <linux/swab.h>
 #include <linux/workqueue.h>
 #include <linux/jiffies.h>
+#include <linux/delay.h>
 #include <linux/moduleparam.h>
 #include <asm/memory.h>
 
 static int rdp_c3;
 module_param_named(rdp_c3, rdp_c3, int, 0444);
-MODULE_PARM_DESC(rdp_c3, "C3 bitmask: 1=ring table, 2=BBH_TX, 4=DSPTCHR, 8=RNR, 16=probe");
+MODULE_PARM_DESC(rdp_c3, "C3 bitmask: 1=ring table, 2=BBH_TX, 4=DSPTCHR, 8=RNR+BBH_RX, 16=Q_DEST, 32=probe");
 
 static uint rdp_c3_ring_base;
 module_param_named(rdp_c3_ring_base, rdp_c3_ring_base, uint, 0444);
@@ -62,9 +63,9 @@ static uint rdp_c3_dsp_ports = 5;
 module_param_named(rdp_c3_dsp_ports, rdp_c3_dsp_ports, uint, 0444);
 MODULE_PARM_DESC(rdp_c3_dsp_ports, "DSPTCHR credit entries v=0..n-1 (default 5)");
 
-static uint rdp_c3_rnr_cores = 6;
+static uint rdp_c3_rnr_cores = 5;
 module_param_named(rdp_c3_rnr_cores, rdp_c3_rnr_cores, uint, 0444);
-MODULE_PARM_DESC(rdp_c3_rnr_cores, "RNR global enable cores (default 6)");
+MODULE_PARM_DESC(rdp_c3_rnr_cores, "RNR global enable cores (default 5; core 5 is absent)");
 
 static uint rdp_c3_rx_ports = 7;
 module_param_named(rdp_c3_rx_ports, rdp_c3_rx_ports, uint, 0444);
@@ -73,6 +74,10 @@ MODULE_PARM_DESC(rdp_c3_rx_ports, "BBH_RX ports p=0..n-1 (default 7)");
 static uint rdp_c3_qdest_port = 2;
 module_param_named(rdp_c3_qdest_port, rdp_c3_qdest_port, uint, 0444);
 MODULE_PARM_DESC(rdp_c3_qdest_port, "Q_DEST punt port bit (default 2 = LAN2)");
+
+static uint rdp_c3_watch_secs = 20;
+module_param_named(rdp_c3_watch_secs, rdp_c3_watch_secs, uint, 0444);
+MODULE_PARM_DESC(rdp_c3_watch_secs, "ring write pointer watch duration in seconds (default 20)");
 
 #define C3_RING_COUNT		8
 #define C3_RING_ENTRIES		8
@@ -444,6 +449,7 @@ static int c3_write_rnr(void)
 
 	for (core = 0; core < rdp_c3_rnr_cores; core++) {
 		u32 off = core * 0x1000;
+		u32 tries;
 
 		old = readl(p + off);
 		if (old == 0xffffffffu) {
@@ -457,19 +463,30 @@ static int c3_write_rnr(void)
 		c3_rnr_save[core] = old;
 		c3_rnr_written = core + 1;
 
-		writel(new, p + off);
-		rb = readl(p + off);
 		/*
-		 * 现场（run #95 前）：RNR[1] old=0x0101f302，写 0x0101f303 后
-		 * 读回 0x0101f301 —— 硬件会清掉 bit1（状态/保留位），
-		 * 所以只断言 bit0（enable）为 1，其他位允许被硬件改写。
+		 * 现场（run #95）：RNR[1] old=0x0101f302 写 0x0101f303 后
+		 * 读回 0x0101f301 —— 硬件清 bit1（状态位）；RNR[3]/[5]
+		 * 偶发写不进 bit0（core 不存在或离线）。因此：
+		 *  - 写后只断言 bit0（enable），其他位允许被硬件改写；
+		 *  - 重试 3 次；仍不行则记录并跳过（core 0 除外）。
 		 */
+		for (tries = 0; tries < 3; tries++) {
+			writel(new, p + off);
+			rb = readl(p + off);
+			if (rb & C3_RNR_ENABLE)
+				break;
+			mdelay(1);
+		}
 		pr_info("C3 RNR[%u] 0x%05x old=0x%08x wrote=0x%08x readback=0x%08x bit0=%d %s\n",
 			core, off, old, new, rb, !!(rb & C3_RNR_ENABLE),
-			(rb & C3_RNR_ENABLE) ? "OK" : "MISMATCH");
+			(rb & C3_RNR_ENABLE) ? "OK" : "SKIP");
 		if (!(rb & C3_RNR_ENABLE)) {
-			rc = -EIO;
-			break;
+			if (core == 0) {
+				rc = -EIO;
+				break;
+			}
+			pr_info("C3 RNR[%u] not writable, skip (absent/offline)\n",
+				core);
 		}
 	}
 	iounmap(p);
@@ -688,7 +705,7 @@ static void c3_watch_fn(struct work_struct *work)
 	pr_cont("\n");
 	iounmap(p);
 
-	if (++c3_watch_ticks < 20)
+	if (++c3_watch_ticks < rdp_c3_watch_secs)
 		queue_delayed_work(system_wq, &c3_watch,
 				   msecs_to_jiffies(1000));
 }
