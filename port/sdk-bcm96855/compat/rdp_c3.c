@@ -14,7 +14,7 @@
  *   bit2 (4)   DSPTCHR credit：0x82880000+0x300+4*v，RMW 清 bit[31:20]
  *              （credit=0，保留低 20 位阈值），v=0..rdp_c3_dsp_ports-1
  *   bit3 (8)   RNR 全局 enable（0x82800000+0x1000*core bit0=1，RMW）
- *              + BBH_RX 端口（0x82898000+0x400*p：+0x04/+0x30/+0x34/+0x3c）
+ *              + BBH_RX 端口（0x82898000+0x400*p：+0x00/+0x04/+0x30/+0x34/+0x64/+0x3c）
  *   bit4 (16)  Q_DEST punt 实验：0x828804C0 bit[port]=1、0x82880600 解对应位
  *   bit5 (32)  只读探测（0x82703000/0x82703870/0x828804C0/0x82880600 ...）
  *   bit6 (64)  RXQ 表（0x82703870 / 0x82703a40，表地址/长度/值全部由参数给出；
@@ -142,10 +142,14 @@ MODULE_PARM_DESC(rdp_c3_rxq_data_type, "RXQ data type values, comma-separated u3
 
 #define C3_BBH_RX_BASE		0x82898000u
 #define C3_BBH_RX_STRIDE	0x400u
+#define C3_BBH_RX_SBPM_ID	0x00		/* SBPM BB id（分支 6：0x00381200） */
 #define C3_BBH_RX_VIQ		0x04
 #define C3_BBH_RX_0X30		0x30
 #define C3_BBH_RX_0X34		0x34
+#define C3_BBH_RX_0X64		0x64		/* sbpmcfg（分支 6：0x0f） */
 #define C3_BBH_RX_CTRL		0x3c		/* 最后写，bit0/1 使能 */
+#define C3_BBH_RX_SBPM_ID_VAL	0x00381200u
+#define C3_BBH_RX_0X64_VAL	0x0fu
 
 /* §7.1：BBH_TX 三个实例 */
 #define C3_BBH_TX_BASE(p)	(0x82890000u + 0x2000u * (u32)(p))
@@ -171,7 +175,7 @@ static int c3_dsp_written;
 static u32 c3_rnr_save[C3_RNR_MAX];
 static int c3_rnr_written;
 
-static u32 c3_rx_save[C3_RX_MAX][4];
+static u32 c3_rx_save[C3_RX_MAX][6];
 static int c3_rx_written;
 
 static u32 c3_qdest_save[2];	/* [0]=VQ_EN old, [1]=Q_DEST old */
@@ -568,31 +572,52 @@ static int c3_write_bbh_rx(void)
 	for (port = 0; port < rdp_c3_rx_ports; port++) {
 		u32 base = port * C3_BBH_RX_STRIDE;
 		u32 viq = port | (port << 8);
-		u32 r_viq, r_30, r_34, r_ctrl;
+		u32 r_id, r_viq, r_30, r_34, r_64, r_ctrl;
+		int target = (port == (rdp_c3_qdest_port & 0x1f));
+		int ok;
 
-		c3_rx_save[port][0] = readl(p + base + C3_BBH_RX_VIQ);
-		c3_rx_save[port][1] = readl(p + base + C3_BBH_RX_0X30);
-		c3_rx_save[port][2] = readl(p + base + C3_BBH_RX_0X34);
-		c3_rx_save[port][3] = readl(p + base + C3_BBH_RX_CTRL);
+		c3_rx_save[port][0] = readl(p + base + C3_BBH_RX_SBPM_ID);
+		c3_rx_save[port][1] = readl(p + base + C3_BBH_RX_VIQ);
+		c3_rx_save[port][2] = readl(p + base + C3_BBH_RX_0X30);
+		c3_rx_save[port][3] = readl(p + base + C3_BBH_RX_0X34);
+		c3_rx_save[port][4] = readl(p + base + C3_BBH_RX_0X64);
+		c3_rx_save[port][5] = readl(p + base + C3_BBH_RX_CTRL);
 		c3_rx_written = port + 1;
 
+		/*
+		 * 分支 6 完整顺序（目标端口 p=rdp_c3_qdest_port，默认 2）：
+		 * +0x00 → +0x04 → +0x30 → +0x34 → +0x64 → +0x3c（最后）。
+		 * 其他端口只写原来的 4 项，避免把同一 SBPM BB id 写到所有端口。
+		 */
+		if (target)
+			writel(C3_BBH_RX_SBPM_ID_VAL,
+			       p + base + C3_BBH_RX_SBPM_ID);
 		writel(viq, p + base + C3_BBH_RX_VIQ);
 		writel(0x12, p + base + C3_BBH_RX_0X30);
 		writel(0xff, p + base + C3_BBH_RX_0X34);
+		if (target)
+			writel(C3_BBH_RX_0X64_VAL,
+			       p + base + C3_BBH_RX_0X64);
 		writel(0x3, p + base + C3_BBH_RX_CTRL);	/* 最后写 */
 
+		r_id = readl(p + base + C3_BBH_RX_SBPM_ID);
 		r_viq = readl(p + base + C3_BBH_RX_VIQ);
 		r_30 = readl(p + base + C3_BBH_RX_0X30);
 		r_34 = readl(p + base + C3_BBH_RX_0X34);
+		r_64 = readl(p + base + C3_BBH_RX_0X64);
 		r_ctrl = readl(p + base + C3_BBH_RX_CTRL);
 
-		pr_info("C3 BBH_RX[%u] +0x04=0x%08x +0x30=0x%08x +0x34=0x%08x +0x3c=0x%08x %s\n",
-			port, r_viq, r_30, r_34, r_ctrl,
-			(r_viq == viq && r_30 == 0x12 &&
-			 r_34 == 0xff && r_ctrl == 0x3) ? "OK" : "MISMATCH");
+		ok = (r_viq == viq && r_30 == 0x12 && r_34 == 0xff &&
+		      r_ctrl == 0x3);
+		if (target)
+			ok = ok && (r_id == C3_BBH_RX_SBPM_ID_VAL &&
+				    r_64 == C3_BBH_RX_0X64_VAL);
 
-		if (r_viq != viq || r_30 != 0x12 ||
-		    r_34 != 0xff || r_ctrl != 0x3) {
+		pr_info("C3 BBH_RX[%u]%s +0x00=0x%08x +0x04=0x%08x +0x30=0x%08x +0x34=0x%08x +0x64=0x%08x +0x3c=0x%08x %s\n",
+			port, target ? "(target)" : "", r_id, r_viq, r_30,
+			r_34, r_64, r_ctrl, ok ? "OK" : "MISMATCH");
+
+		if (!ok) {
 			rc = -EIO;
 			break;
 		}
@@ -613,12 +638,19 @@ static void c3_restore_bbh_rx(void)
 	if (p) {
 		for (port = 0; port < c3_rx_written; port++) {
 			u32 base = port * C3_BBH_RX_STRIDE;
+			int target = (port == (rdp_c3_qdest_port & 0x1f));
 
-			/* 先关使能，再恢复其余字段 */
-			writel(c3_rx_save[port][3], p + base + C3_BBH_RX_CTRL);
-			writel(c3_rx_save[port][2], p + base + C3_BBH_RX_0X34);
-			writel(c3_rx_save[port][1], p + base + C3_BBH_RX_0X30);
-			writel(c3_rx_save[port][0], p + base + C3_BBH_RX_VIQ);
+			/* 先关使能，再按写入逆序恢复 */
+			writel(c3_rx_save[port][5], p + base + C3_BBH_RX_CTRL);
+			if (target)
+				writel(c3_rx_save[port][4],
+				       p + base + C3_BBH_RX_0X64);
+			writel(c3_rx_save[port][3], p + base + C3_BBH_RX_0X34);
+			writel(c3_rx_save[port][2], p + base + C3_BBH_RX_0X30);
+			writel(c3_rx_save[port][1], p + base + C3_BBH_RX_VIQ);
+			if (target)
+				writel(c3_rx_save[port][0],
+				       p + base + C3_BBH_RX_SBPM_ID);
 		}
 		iounmap(p);
 	}
@@ -913,11 +945,13 @@ static void c3_diag_dump(int tick)
 		iounmap(p);
 	}
 
-	/* BBH_RX port 2：0x82898000 + 2*0x400 */
+	/* BBH_RX port 2：0x82898000 + 2*0x400；PM 计数 +0x100/+0x11c/+0x124 */
 	p = ioremap(0x82898000, 0x1000);
 	if (p) {
-		pr_info("C3 DIAG[%d] BBH_RX2 +04=%08x +3c=%08x\n", tick,
-			readl(p + 0x800 + 0x04), readl(p + 0x800 + 0x3c));
+		pr_info("C3 DIAG[%d] BBH_RX2 +04=%08x +3c=%08x PM +100=%08x +11c=%08x +124=%08x\n",
+			tick, readl(p + 0x800 + 0x04), readl(p + 0x800 + 0x3c),
+			readl(p + 0x800 + 0x100), readl(p + 0x800 + 0x11c),
+			readl(p + 0x800 + 0x124));
 		iounmap(p);
 	}
 
