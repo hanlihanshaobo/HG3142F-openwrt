@@ -680,6 +680,68 @@ static void c3_restore_qdest(void)
 /* ring 写指针观察：0x82703000 + id*0x10 + 6（大端 u16）                 */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* C3-b 诊断：ring 表项 / UNIMAC mac2 / BBH_RX2 / VQ_EN/Q_DEST          */
+/* ------------------------------------------------------------------ */
+
+static void c3_diag_dump(int tick)
+{
+	void __iomem *p;
+	int i;
+
+	if (!rdp_c3_ring_base)
+		return;
+
+	pr_info("C3 DIAG[%d] BEGIN\n", tick);
+
+	p = ioremap(rdp_c3_ring_base, C3_RING_COUNT * 0x10);
+	if (p) {
+		for (i = 0; i < C3_RING_COUNT; i++)
+			pr_info("C3 DIAG[%d] ring%d: %08x %08x %08x %08x\n",
+				tick, i,
+				readl(p + i * 0x10),
+				readl(p + i * 0x10 + 0x4),
+				readl(p + i * 0x10 + 0x8),
+				readl(p + i * 0x10 + 0xc));
+		iounmap(p);
+	}
+
+	/* UNIMAC mac2 (LAN2)：0x828aa000 */
+	p = ioremap(0x828aa000, 0x1000);
+	if (p) {
+		pr_info("C3 DIAG[%d] mac2 CMD=%08x IPG=%08x MAC0=%08x MAC1=%08x FRM=%08x PAUSEQ=%08x\n",
+			tick, readl(p + 0x008), readl(p + 0x004),
+			readl(p + 0x00c), readl(p + 0x010),
+			readl(p + 0x014), readl(p + 0x018));
+		for (i = 0; i < 32; i += 4)
+			pr_info("C3 DIAG[%d] mac2 %03x: %08x %08x %08x %08x\n",
+				tick, 0x700 + i * 4,
+				readl(p + 0x700 + i * 4),
+				readl(p + 0x700 + i * 4 + 0x4),
+				readl(p + 0x700 + i * 4 + 0x8),
+				readl(p + 0x700 + i * 4 + 0xc));
+		iounmap(p);
+	}
+
+	/* BBH_RX port 2：0x82898000 + 2*0x400 */
+	p = ioremap(0x82898000, 0x1000);
+	if (p) {
+		pr_info("C3 DIAG[%d] BBH_RX2 +04=%08x +3c=%08x\n", tick,
+			readl(p + 0x800 + 0x04), readl(p + 0x800 + 0x3c));
+		iounmap(p);
+	}
+
+	p = ioremap(0x82880000, 0x1000);
+	if (p) {
+		pr_info("C3 DIAG[%d] VQ_EN=%08x QDEST=%08x 600=%08x 604=%08x\n",
+			tick, readl(p + 0x004), readl(p + 0x4c0),
+			readl(p + 0x600), readl(p + 0x604));
+		iounmap(p);
+	}
+
+	pr_info("C3 DIAG[%d] END\n", tick);
+}
+
 static void c3_watch_fn(struct work_struct *work)
 {
 	void __iomem *p;
@@ -704,6 +766,10 @@ static void c3_watch_fn(struct work_struct *work)
 	}
 	pr_cont("\n");
 	iounmap(p);
+
+	if (c3_watch_ticks == 0 || c3_watch_ticks == 30 ||
+	    c3_watch_ticks + 5 == rdp_c3_watch_secs)
+		c3_diag_dump(c3_watch_ticks);
 
 	if (++c3_watch_ticks < rdp_c3_watch_secs)
 		queue_delayed_work(system_wq, &c3_watch,
