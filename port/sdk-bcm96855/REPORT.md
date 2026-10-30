@@ -691,3 +691,14 @@ FPM_CTRL 恢复 `0x00100188`、7 个寄存器恢复、三块内存释放。
   CPU ring）。下一步 C3-c：RXQ 表 0x82703870/0x82703a40 + VIQ2→ring；必要时 B1。
 - 无 panic；rmmod 全部 restore；设备已释放。
 
+
+
+## 2026-10-30：C3-c 代码准备（离线，未构建）
+
+- `rdp_c3` 新增 bit6 (64)=RXQ 表，默认关闭；表地址/长度/值由参数提供：
+  `rdp_c3_rxq_buf_base/count/cfg`、`rdp_c3_rxq_dtype_base/count/data_type`。
+- 值列表为空时不写任何寄存器（打印 skip，等分支 6 格式）；写入逐项保存原值并读回，
+  失败 -EIO；restore 先关 Q_DEST 门，再按 written 恢复两张表。
+- 运行顺序 RNR/BBH_RX → RXQ → Q_DEST；bit6 单独开启且无值时是安全 no-op。
+- 未构建、未上设备、未触发 CI。等分支 6 确认表格式/VIQ2→ring 映射后填默认值。
+

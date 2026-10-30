@@ -17,12 +17,18 @@
  *              + BBH_RX 端口（0x82898000+0x400*p：+0x04/+0x30/+0x34/+0x3c）
  *   bit4 (16)  Q_DEST punt 实验：0x828804C0 bit[port]=1、0x82880600 解对应位
  *   bit5 (32)  只读探测（0x82703000/0x82703870/0x828804C0/0x82880600 ...）
+ *   bit6 (64)  RXQ 表（0x82703870 / 0x82703a40，表地址/长度/值全部由参数给出；
+ *              默认不写，等分支 6 确认表格式后再填默认值）
  *
  * 占位参数：
  *   rdp_c3_ring_base=<物理地址>  ring 表基址（16 B 对齐；本轮 0x82703000）
  *   rdp_c3_ring_id=<n>           起始环号（默认 0，写 0..7）
  *   rdp_c3_ring_phys=<物理地址>  0 = 模块分配 8×4 KiB 数据缓冲
  *   rdp_c3_port=<0..2>           BBH_TX 实例（bit1 用）
+ *   rdp_c3_rxq_buf_base/count    RXQ buf cfg 表地址/长度（默认 0x82703870/0）
+ *   rdp_c3_rxq_buf_cfg=<v0,...>  RXQ buf cfg 表项值（逗号分隔 u32，空=不写）
+ *   rdp_c3_rxq_dtype_base/count  RXQ data type 表地址/长度（默认 0x82703a40/0）
+ *   rdp_c3_rxq_data_type=<v0,..> RXQ data type 表项值（逗号分隔 u32，空=不写）
  *
  * 边界：不写 BBH/DSPTCHR/RNR（bit1 保留但本轮不置位）、不发包、不注册中断；
  * 所有写入在 rmmod 时按备份恢复。
@@ -37,11 +43,14 @@
 #include <linux/jiffies.h>
 #include <linux/delay.h>
 #include <linux/moduleparam.h>
+#include <linux/string.h>
+#include <linux/slab.h>
+#include <linux/kstrtox.h>
 #include <asm/memory.h>
 
 static int rdp_c3;
 module_param_named(rdp_c3, rdp_c3, int, 0444);
-MODULE_PARM_DESC(rdp_c3, "C3 bitmask: 1=ring table, 2=BBH_TX, 4=DSPTCHR, 8=RNR+BBH_RX, 16=Q_DEST, 32=probe");
+MODULE_PARM_DESC(rdp_c3, "C3 bitmask: 1=ring table, 2=BBH_TX, 4=DSPTCHR, 8=RNR+BBH_RX, 16=Q_DEST, 32=probe, 64=RXQ table");
 
 static uint rdp_c3_ring_base;
 module_param_named(rdp_c3_ring_base, rdp_c3_ring_base, uint, 0444);
@@ -79,6 +88,31 @@ static uint rdp_c3_watch_secs = 20;
 module_param_named(rdp_c3_watch_secs, rdp_c3_watch_secs, uint, 0444);
 MODULE_PARM_DESC(rdp_c3_watch_secs, "ring write pointer watch duration in seconds (default 20)");
 
+/* bit6：RXQ 表（离线骨架；格式等分支 6 确认后再填默认值） */
+static uint rdp_c3_rxq_buf_base = 0x82703870u;
+module_param_named(rdp_c3_rxq_buf_base, rdp_c3_rxq_buf_base, uint, 0444);
+MODULE_PARM_DESC(rdp_c3_rxq_buf_base, "RXQ buf cfg table base (default 0x82703870)");
+
+static uint rdp_c3_rxq_buf_count;
+module_param_named(rdp_c3_rxq_buf_count, rdp_c3_rxq_buf_count, uint, 0444);
+MODULE_PARM_DESC(rdp_c3_rxq_buf_count, "RXQ buf cfg entries (0 = derive from value list)");
+
+static char *rdp_c3_rxq_buf_cfg = "";
+module_param_named(rdp_c3_rxq_buf_cfg, rdp_c3_rxq_buf_cfg, charp, 0444);
+MODULE_PARM_DESC(rdp_c3_rxq_buf_cfg, "RXQ buf cfg values, comma-separated u32 (empty = no write)");
+
+static uint rdp_c3_rxq_dtype_base = 0x82703a40u;
+module_param_named(rdp_c3_rxq_dtype_base, rdp_c3_rxq_dtype_base, uint, 0444);
+MODULE_PARM_DESC(rdp_c3_rxq_dtype_base, "RXQ data type table base (default 0x82703a40)");
+
+static uint rdp_c3_rxq_dtype_count;
+module_param_named(rdp_c3_rxq_dtype_count, rdp_c3_rxq_dtype_count, uint, 0444);
+MODULE_PARM_DESC(rdp_c3_rxq_dtype_count, "RXQ data type entries (0 = derive from value list)");
+
+static char *rdp_c3_rxq_data_type = "";
+module_param_named(rdp_c3_rxq_data_type, rdp_c3_rxq_data_type, charp, 0444);
+MODULE_PARM_DESC(rdp_c3_rxq_data_type, "RXQ data type values, comma-separated u32 (empty = no write)");
+
 #define C3_RING_COUNT		8
 #define C3_RING_ENTRIES		8
 #define C3_RING_ENTRY_SIZE	16
@@ -86,6 +120,7 @@ MODULE_PARM_DESC(rdp_c3_watch_secs, "ring write pointer watch duration in second
 #define C3_RING_DATA_SIZE	(C3_RING_COUNT * C3_RING_BUF_SIZE)
 
 #define C3_PROBE_BIT		32	/* bit5：只读探测 */
+#define C3_RXQ_BIT		64	/* bit6：RXQ 表（值由参数提供，默认不写） */
 #define C3_QDEST_BIT		16	/* bit4：Q_DEST punt 实验 */
 #define C3_RING_BIT		1
 #define C3_BBH_BIT		2
@@ -677,6 +712,150 @@ static void c3_restore_qdest(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* bit6：RXQ 表（离线骨架；格式等分支 6 确认后再填默认值）              */
+/* ------------------------------------------------------------------ */
+
+#define C3_RXQ_MAX	16
+
+static u32 c3_rxq_buf_val[C3_RXQ_MAX];
+static u32 c3_rxq_buf_save[C3_RXQ_MAX];
+static int c3_rxq_buf_written;
+static u32 c3_rxq_dtype_val[C3_RXQ_MAX];
+static u32 c3_rxq_dtype_save[C3_RXQ_MAX];
+static int c3_rxq_dtype_written;
+
+static int c3_parse_u32_list(const char *s, u32 *out, int max)
+{
+	char *buf, *p, *tok;
+	int n = 0;
+
+	if (!s || !*s)
+		return 0;
+
+	buf = kstrdup(s, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	p = buf;
+	while ((tok = strsep(&p, ",")) != NULL) {
+		u32 v;
+
+		if (!*tok)
+			continue;
+		if (kstrtou32(tok, 0, &v)) {
+			kfree(buf);
+			return -EINVAL;
+		}
+		if (n >= max) {
+			kfree(buf);
+			return -E2BIG;
+		}
+		out[n++] = v;
+	}
+	kfree(buf);
+	return n;
+}
+
+static int c3_write_rxq_table(const char *name, uint base, uint count,
+			      const char *values, u32 *val, u32 *save,
+			      int *written)
+{
+	void __iomem *p;
+	int n, i, rc = 0;
+
+	n = c3_parse_u32_list(values, val, C3_RXQ_MAX);
+	if (n < 0) {
+		pr_err("C3 RXQ: %s value parse failed (%d)\n", name, n);
+		return n;
+	}
+	if (!n) {
+		pr_info("C3 RXQ: %s no values, skip (format pending)\n", name);
+		return 0;
+	}
+	if (count && n != (int)count) {
+		pr_err("C3 RXQ: %s value count %d != count param %u\n",
+			name, n, count);
+		return -EINVAL;
+	}
+
+	p = ioremap(base, n * 4);
+	if (!p)
+		return -ENOMEM;
+
+	*written = 0;
+	for (i = 0; i < n; i++) {
+		u32 rb;
+
+		save[i] = readl(p + i * 4);
+		writel(val[i], p + i * 4);
+		*written = i + 1;
+		rb = readl(p + i * 4);
+		pr_info("C3 RXQ: %s[%d] 0x%05x old=0x%08x wrote=0x%08x readback=0x%08x %s\n",
+			name, i, base + i * 4, save[i], val[i], rb,
+			(rb == val[i]) ? "OK" : "MISMATCH");
+		if (rb != val[i]) {
+			rc = -EIO;
+			break;
+		}
+	}
+	iounmap(p);
+	return rc;
+}
+
+static int c3_write_rxq(void)
+{
+	int rc;
+
+	/*
+	 * 顺序：先建 RXQ 表，再由 bit4 打开 Q_DEST/VQ_EN 的门。
+	 * 注意：表项格式/长度尚未由分支 6 确认，本函数在值为空时只打印、
+	 * 不写任何寄存器（避免猜写）。
+	 */
+	rc = c3_write_rxq_table("buf_cfg", rdp_c3_rxq_buf_base,
+				rdp_c3_rxq_buf_count, rdp_c3_rxq_buf_cfg,
+				c3_rxq_buf_val, c3_rxq_buf_save,
+				&c3_rxq_buf_written);
+	if (rc)
+		return rc;
+
+	return c3_write_rxq_table("data_type", rdp_c3_rxq_dtype_base,
+				  rdp_c3_rxq_dtype_count, rdp_c3_rxq_data_type,
+				  c3_rxq_dtype_val, c3_rxq_dtype_save,
+				  &c3_rxq_dtype_written);
+}
+
+static void c3_restore_rxq(void)
+{
+	void __iomem *p;
+	int i;
+
+	if (!c3_rxq_buf_written && !c3_rxq_dtype_written)
+		return;
+
+	if (c3_rxq_buf_written) {
+		p = ioremap(rdp_c3_rxq_buf_base, c3_rxq_buf_written * 4);
+		if (p) {
+			for (i = 0; i < c3_rxq_buf_written; i++)
+				writel(c3_rxq_buf_save[i], p + i * 4);
+			iounmap(p);
+		}
+		c3_rxq_buf_written = 0;
+	}
+
+	if (c3_rxq_dtype_written) {
+		p = ioremap(rdp_c3_rxq_dtype_base, c3_rxq_dtype_written * 4);
+		if (p) {
+			for (i = 0; i < c3_rxq_dtype_written; i++)
+				writel(c3_rxq_dtype_save[i], p + i * 4);
+			iounmap(p);
+		}
+		c3_rxq_dtype_written = 0;
+	}
+
+	pr_info("C3: RXQ tables restored\n");
+}
+
+/* ------------------------------------------------------------------ */
 /* ring 写指针观察：0x82703000 + id*0x10 + 6（大端 u16）                 */
 /* ------------------------------------------------------------------ */
 
@@ -818,6 +997,7 @@ void rdp_c3_restore(void)
 	c3_watch_stop();
 
 	c3_restore_qdest();
+	c3_restore_rxq();
 	c3_restore_bbh_rx();
 	c3_restore_rnr();
 	c3_restore_dsptchr();
@@ -865,6 +1045,8 @@ void rdp_c3_run(void)
 		rc = c3_write_rnr();
 	if (!rc && (rdp_c3 & C3_RNR_BIT))
 		rc = c3_write_bbh_rx();
+	if (!rc && (rdp_c3 & C3_RXQ_BIT))
+		rc = c3_write_rxq();
 	if (!rc && (rdp_c3 & C3_QDEST_BIT))
 		rc = c3_write_qdest();
 
@@ -873,13 +1055,14 @@ void rdp_c3_run(void)
 		rdp_c3_restore();
 		return;
 	}
-	if (rdp_c3 & (C3_RING_BIT | C3_BBH_BIT | C3_DSP_BIT | C3_RNR_BIT))
-		pr_info("C3: done (ring=%d bbh_tx=%d dsp=%d rnr/rx=%d qdest=%d)\n",
+	if (rdp_c3 & (C3_RING_BIT | C3_BBH_BIT | C3_DSP_BIT | C3_RNR_BIT |
+		      C3_RXQ_BIT | C3_QDEST_BIT))
+		pr_info("C3: done (ring=%d bbh_tx=%d dsp=%d rnr/rx=%d rxq=%d qdest=%d)\n",
 			!!(rdp_c3 & C3_RING_BIT), !!(rdp_c3 & C3_BBH_BIT),
 			!!(rdp_c3 & C3_DSP_BIT), !!(rdp_c3 & C3_RNR_BIT),
-			!!(rdp_c3 & C3_QDEST_BIT));
+			!!(rdp_c3 & C3_RXQ_BIT), !!(rdp_c3 & C3_QDEST_BIT));
 
-	/* ring 写指针观察：insmod 返回后每秒打印，持续 20s */
+	/* ring 写指针观察：insmod 返回后每秒打印，持续 rdp_c3_watch_secs 秒 */
 	if (!rc && (rdp_c3 & C3_RING_BIT))
 		c3_watch_start();
 }
