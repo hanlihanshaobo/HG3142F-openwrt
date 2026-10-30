@@ -446,15 +446,28 @@ static int c3_write_rnr(void)
 		u32 off = core * 0x1000;
 
 		old = readl(p + off);
+		if (old == 0xffffffffu) {
+			/* core 不存在：不要写 */
+			pr_info("C3 RNR[%u] 0x%05x absent (0xffffffff), skip\n",
+				core, off);
+			continue;
+		}
+
 		new = old | C3_RNR_ENABLE;
 		c3_rnr_save[core] = old;
 		c3_rnr_written = core + 1;
 
 		writel(new, p + off);
 		rb = readl(p + off);
-		pr_info("C3 RNR[%u] 0x%05x old=0x%08x wrote=0x%08x readback=0x%08x %s\n",
-			core, off, old, new, rb, (rb == new) ? "OK" : "MISMATCH");
-		if (rb != new) {
+		/*
+		 * 现场（run #95 前）：RNR[1] old=0x0101f302，写 0x0101f303 后
+		 * 读回 0x0101f301 —— 硬件会清掉 bit1（状态/保留位），
+		 * 所以只断言 bit0（enable）为 1，其他位允许被硬件改写。
+		 */
+		pr_info("C3 RNR[%u] 0x%05x old=0x%08x wrote=0x%08x readback=0x%08x bit0=%d %s\n",
+			core, off, old, new, rb, !!(rb & C3_RNR_ENABLE),
+			(rb & C3_RNR_ENABLE) ? "OK" : "MISMATCH");
+		if (!(rb & C3_RNR_ENABLE)) {
 			rc = -EIO;
 			break;
 		}
