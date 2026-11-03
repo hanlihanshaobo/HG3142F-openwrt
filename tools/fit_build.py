@@ -12,7 +12,9 @@ import os
 import sys
 import struct
 import binascii
+import hashlib
 
+CONF_NAME = 'conf_lx_968552CREF_CM_XG'
 FDT_MAGIC = 0xD00DFEED
 FDT_BEGIN_NODE, FDT_END_NODE, FDT_PROP, FDT_NOP, FDT_END = 1, 2, 3, 4, 9
 
@@ -69,6 +71,8 @@ class FdtBuilder:
 def build_fit(zimg, dtb, load, entry, out, desc='OpenWrt BCM96855 FIT'):
     kernel_crc = binascii.crc32(zimg) & 0xFFFFFFFF
     fdt_crc = binascii.crc32(dtb) & 0xFFFFFFFF
+    kernel_sha = hashlib.sha256(zimg).digest()
+    fdt_sha = hashlib.sha256(dtb).digest()
 
     b = FdtBuilder()
     b.begin('')
@@ -91,6 +95,11 @@ def build_fit(zimg, dtb, load, entry, out, desc='OpenWrt BCM96855 FIT'):
     b.prop_str('algo', 'crc32')
     b.prop_u32('value', kernel_crc)
     b.end()
+    # 厂商 U-Boot 加载时按 sha256+ 校验，这里同时给出 sha256
+    b.begin('hash@2')
+    b.prop_str('algo', 'sha256')
+    b.prop('value', kernel_sha)
+    b.end()
     b.end()
 
     b.begin('fdt@1')
@@ -103,14 +112,20 @@ def build_fit(zimg, dtb, load, entry, out, desc='OpenWrt BCM96855 FIT'):
     b.prop_str('algo', 'crc32')
     b.prop_u32('value', fdt_crc)
     b.end()
+    b.begin('hash@2')
+    b.prop_str('algo', 'sha256')
+    b.prop('value', fdt_sha)
+    b.end()
     b.end()
 
     b.end()  # images
 
     # ---- configurations ----
     b.begin('configurations')
-    b.prop_str('default', 'conf@1')
-    b.begin('conf@1')
+    # 厂商 U-Boot 按 boardid 选配置：conf_lx_<boardid>
+    # 实机 boardid = 968552CREF_CM_XG（见 U-Boot 日志 "conf_lx_968552CREF_CM_XG / kernel"）
+    b.prop_str('default', CONF_NAME)
+    b.begin(CONF_NAME)
     b.prop_str('description', 'OpenWrt kernel + dtb')
     b.prop_str('kernel', 'kernel@1')
     b.prop_str('fdt', 'fdt@1')

@@ -420,5 +420,5 @@ CONFIG_ARM_LPAE=y
 # CONFIG_ARCH_BCMBCA_CORTEXA72 is not set
 
 # 内置 root= （厂商 U-Boot 的 sdk boot_img <img> 不会自动追加 root=，只能由内核自带）
-CONFIG_CMDLINE="ubi.mtd=image ubi.block=0,4 root=/dev/ubiblock0_4 rootfstype=squashfs"
+CONFIG_CMDLINE="console=ttyAMA0,115200"
 CONFIG_CMDLINE_EXTEND=y
