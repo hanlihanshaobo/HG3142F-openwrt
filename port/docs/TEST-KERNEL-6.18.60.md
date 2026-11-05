@@ -107,31 +107,63 @@ test_images/kernel-6.18.60/
 └── SHA256SUMS
 ```
 
-## 四、未覆盖的测试
+## 四、CI 结果（GitHub Actions #101）
 
-- **完整 OpenWrt 镜像**（rootfs / 包 / feeds）未构建：构建机访问 GitHub 受限，无法拉取 feeds。
-- **GitHub Actions** 未触发：本地分支尚未 push 到 GitHub（网络限制）。
-- **实机启动** 未做：本次只验证编译与模块 ABI，不写 NAND、不改设备槽位。
+- 分支：`kernel-6.18.60`
+- 提交：`629ebfc`
+- 运行：https://github.com/hanlihanshaobo/HG3142F-openwrt/actions/runs/42052084085
+- 结论：**success**
+- 完整构建耗时：**2629 s**（约 44 分钟）
+- 重复触发的 #102 已取消
 
-## 五、结论与下一步
+关键步骤全部成功：
 
-1. 6.18.60 的代码适配和构建链路已经验证通过，可以进入 CI / 实机验证阶段。
-2. 把 `kernel-6.18.60` push 到 GitHub：
+```text
+15 Build                      success   ← 完整镜像
+18 SDK compile probe (bcm_enet) success
+19 Package probe (kmod-bcm-enet) success
+20 SDK compile probe (bcm_pcie)  success
+21 Export kernel Image/rootfs    success
+25 Upload artifact               success
+```
 
-   ```bash
-   cd HG3142F-openwrt
-   git push -u origin kernel-6.18.60
-   ```
+CI 产物 `openwrt-mb4784w-101`（36,728,120 B）中确认：
 
-3. 在 Actions 页面选择 `Build OpenWrt firmware` → `Run workflow`，分支选
-   `kernel-6.18.60`，先跑一次**完整构建**（不要勾 `module_only`）：
-   - 检查 `==> 内核基线: Linux 6.18.60`
-   - 检查 `zImage-nodtb` / DTB / `bcm_enet.ko` 产物
-   - 检查 `bcm_enet` / `bcm_pcie` probe 的 `error count = 0`
-4. CI 和实机都通过后，再把 `kernel-6.18.60` 合并进 `main`：
+| 产物 | 大小 | sha256 |
+|---|---:|---|
+| `Image` | 27,860,320 B | `549d7a95d9475cf3491de5463781f288fc1fec431557298ea22b5e96fbcbf69d` |
+| `Image.lzo` | 10,437,286 B | `111c49d9abde0841446e5d3d324abc80aef28dd958a5394bc3516c9aca28d99b` |
+| `bcm_enet.ko` | 697,068 B | `a8c280622f4ef7f02d1e16fcf47ef0e5fa73c2e3b9a1c70d44ea07fd604003eb` |
+| `root.squashfs` | 3,310,478 B | `451586d02ce3efb0337d1f25edd686f22f99bc80a279c9020a4bfa61d41bbf26` |
+| `overlay.ubifs` | 1,650,688 B | `2f9b745b0ab52a092ec931d0316270d636027f6b2d0f083e3e87ebc0f97543c6` |
+| `...-initramfs-kernel.bin` | 6,735,576 B | `c723f18d4c6608836dcd60fe60e83fbbeeb5b9d6c5e5abd058351ae26f92bce3` |
+| `...-squashfs-sysupgrade.bin` | 7,340,302 B | `a638ec1f8919b879bee4358f5a16b8e8310b99228068291f73004c905707a653` |
+
+二进制核对：
+
+```text
+Image:      Linux version 6.18.60 ... OpenWrt GCC 14.4.0
+bcm_enet.ko vermagic=6.18.60 SMP mod_unload ARMv7 p2v8
+```
+
+`probe_enet_sdk.log` 里的内核路径是 `.../linux-6.18.60`，并出现 `LD [M] bcm_enet.ko`。
+
+## 五、未覆盖的测试
+
+- **实机启动** 未做：本次只验证编译、镜像和模块 ABI，不写 NAND、不改设备槽位。
+- 2.5G / LAN / PON 等运行时功能需要在设备上单独验证。
+
+## 六、结论与下一步
+
+1. 6.18.60 的本地构建和 GitHub Actions 完整构建均已通过。
+2. 目前只差实机启动验证；建议先在 slot1 或 RAM 中验证 `Linux version 6.18.60`
+   和 `bcm_enet.ko` 加载，再决定是否合并。
+3. 实机通过后合并：
 
    ```bash
    git checkout main
    git merge --no-ff kernel-6.18.60
    git push origin main
    ```
+
+> 本文档的 CI 结果对应代码提交 `629ebfc`；后续文档提交不改变内核/驱动代码。
