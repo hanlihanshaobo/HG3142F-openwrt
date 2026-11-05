@@ -148,6 +148,10 @@ bcm_enet.ko vermagic=6.18.60 SMP mod_unload ARMv7 p2v8
 
 `probe_enet_sdk.log` 里的内核路径是 `.../linux-6.18.60`，并出现 `LD [M] bcm_enet.ko`。
 
+> **注意**：完整构建导出的 `Image.lzo` 为 10.4 MB，超过 `bootfs1` 约 6.07 MB 的内核预算，
+> 不能直接塞进厂商 FIT。给 slot1 打 FIT 请用 `module_only` 通道导出的 `zImage-nodtb`
+> （约 3.57 MB）或本地 `zImage`（3.62 MB）。
+
 ## 五、未覆盖的测试
 
 - **实机启动** 未做：本次只验证编译、镜像和模块 ABI，不写 NAND、不改设备槽位。
