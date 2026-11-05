@@ -148,9 +148,28 @@ bcm_enet.ko vermagic=6.18.60 SMP mod_unload ARMv7 p2v8
 
 `probe_enet_sdk.log` 里的内核路径是 `.../linux-6.18.60`，并出现 `LD [M] bcm_enet.ko`。
 
-> **注意**：完整构建导出的 `Image.lzo` 为 10.4 MB，超过 `bootfs1` 约 6.07 MB 的内核预算，
-> 不能直接塞进厂商 FIT。给 slot1 打 FIT 请用 `module_only` 通道导出的 `zImage-nodtb`
-> （约 3.57 MB）或本地 `zImage`（3.62 MB）。
+### module-only 通道（#103）
+
+- 运行：https://github.com/hanlihanshaobo/HG3142F-openwrt/actions/runs/42060408988
+- 结论：**success**（约 3.7 分钟）
+- 产物：`bcm-enet-module-103`（6,912,245 B）
+
+| 产物 | 大小 | 说明 |
+|---|---:|---|
+| `zImage-nodtb` | **6,656,816 B** | 裸 zImage |
+| `bcm96855-mb4784w.dtb` | 8,432 B | 板级 DTB |
+| `bcm_enet.ko` | 697,068 B | 与 #101 同尺寸 |
+| `undefined_symbols.txt` | 0 B | 无未决符号 |
+
+> **尺寸注意**：CI 的 `zImage-nodtb` 是 **6.65 MB**，完整构建的 `Image.lzo` 是 **10.4 MB**，
+> 都超过 `bootfs1` 约 **6.07 MB** 的内核预算。CI 内核的压缩/调试配置与本地不同
+> （本地 `zImage` 3.62 MB，`CONFIG_KERNEL_XZ` + `CONFIG_DEBUG_INFO_REDUCED`）。
+> 给 slot1 打 FIT 时：
+> - **优先用本地 `test_images/kernel-6.18.60/zImage`（3.62 MB，尺寸合适；实机启动仍待验证）**；
+> - 或者显式把 `CONFIG_KERNEL_XZ=y` / `CONFIG_DEBUG_INFO_REDUCED=y` 写进 target config，
+>   再重跑 CI 让 `zImage-nodtb` 缩到预算内。
+>
+> 直接用 CI 的 6.65 MB zImage 打 FIT 会超出 bootfs1 容量，不要这么做。
 
 ## 五、未覆盖的测试
 
