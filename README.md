@@ -20,6 +20,8 @@
 
 > ⚠️ **当前不是可用固件**。OpenWrt 上游没有 BCM6855x 的 target（只有 `bcm4908`/ARM64 与 `bcm63xx`/MIPS），`target/linux/bcmbca` 是本仓库自建骨架，需要逐轮迭代到实机可启动。
 
+> **构建基线**：OpenWrt main `5fb9d9c`（2026-10-31），Linux **6.18.60**。上游 7.3 尚未合入 main，本仓库继续跟随 6.18 LTS；升级说明见 [`port/docs/KERNEL-6.18.60.md`](port/docs/KERNEL-6.18.60.md)。
+
 ## 硬件（实测）
 
 | 项目 | 值 |

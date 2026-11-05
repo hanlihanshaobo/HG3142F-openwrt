@@ -79,7 +79,7 @@ def build_fit(zimg, dtb, load, entry, out, desc='OpenWrt BCM96855 FIT'):
     b.begin('images')
 
     b.begin('kernel@1')
-    b.prop_str('description', 'OpenWrt Linux-6.18.55 (zImage)')
+    b.prop_str('description', 'OpenWrt Linux-6.18.60 (zImage)')
     b.prop('data', zimg)
     b.prop_str('type', 'kernel')
     b.prop_str('arch', 'arm')

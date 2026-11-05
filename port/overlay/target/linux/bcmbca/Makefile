@@ -11,6 +11,8 @@ BOARDNAME:=Broadcom BCMBCA (ARMv7 PON gateway)
 SUBTARGETS:=generic
 FEATURES:=squashfs nand ubi ramdisk gpio fpu
 
+# 内核基线：6.18.60（见 port/sources.lock.json 的 kernel_version）。
+# 升级 major（如 7.x）时需同步 workflow 里的 linux-6.18* / config-6.18 路径。
 KERNEL_PATCHVER:=6.18
 KERNELNAME:=zImage dtbs
 
