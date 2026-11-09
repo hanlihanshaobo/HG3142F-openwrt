@@ -230,13 +230,48 @@ root@HG3142F:/# cat /proc/cmdline
   `once` 改回 `run rz_img1`，重启回到 B1-b（4.19.235）。恢复日志：
   [`test_logs/kernel-6.18.60-recover.log`](../../../test_logs/kernel-6.18.60-recover.log)。
 
-## 六、未覆盖的测试
+## 六、完整 6.18 rootfs 尝试（未通过 initramfs）
+
+尝试把 CI 的 6.18 `root.squashfs` 解包成 cpio.gz，走 **kernel + DTB + initramfs**
+的 FIT，全 RAM 启动，避免写 NAND。FIT 8,607,566 B，XMODEM 67247 块 / 911 秒。
+
+结果：内核启动，但 initramfs 解包失败：
+
+```text
+Unpacking initramfs...
+compression method gzip not configured
+Initramfs unpacking failed: decompressor failed
+```
+
+随后内核退回 `root=/dev/ubiblock0_4`（B1-b 21.02 rootfs），并进入了内核里自带的
+**HG3142F flash initramfs (2nd stage)** 救援 shell，而不是 6.18 rootfs。
+
+排查发现：
+
+- 构建树 `.config` 里已经有 `CONFIG_RD_GZIP=y`、`CONFIG_DECOMPRESS_GZIP=y`，
+  但实际启动的内核 `uname` 构建时间仍是 `Nov 5 22:40`，说明发出去的 zImage
+  没有包含重新构建的 vmlinux。
+- `.config` 的 `CONFIG_INITRAMFS_SOURCE` 已置空，但内核里仍带着旧的
+  `HG3142F flash initramfs (2nd stage)`，说明 `usr/initramfs_data.cpio` 没有清掉，
+  内核镜像没有真正重建。
+
+结论：这不是 6.18 内核的问题，是 **内核镜像构建缓存/内置 initramfs 没清干净**。
+下次重试前需要：
+
+```sh
+rm -f usr/initramfs_data.cpio usr/initramfs_data.cpio.*
+# 确认 CONFIG_INITRAMFS_SOURCE=""、RD_GZIP/DECOMPRESS_GZIP=y
+make -j2 ARCH=arm CROSS_COMPILE=... zImage
+# 启动日志里的 Linux version 构建时间必须是新时间
+```
+
+## 七、未覆盖的测试
 
 - **完整 6.18 用户态**：6.18 配套 rootfs + `bcm_enet`/`bcm_pcie`/`bcm_reboot` 模块尚未一起刷入，
   所以本次没有验证 2.5G、LAN、PON 等运行时功能。
 - **写 NAND**：本次只 RAM 启动，没有写 slot1。
 
-## 七、结论与下一步
+## 八、结论与下一步
 
 1. 6.18.60 的本地构建、GitHub Actions 完整构建、**实机 RAM 启动**均已通过。
 2. 还差“6.18 配套 rootfs + 模块”的完整系统验证；建议下一步把本地 `zImage` 打进
