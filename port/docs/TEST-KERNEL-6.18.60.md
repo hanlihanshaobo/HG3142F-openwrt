@@ -189,6 +189,10 @@ rz_win=echo XMODEM-WINDOW;loadx 0x02000000;bootm 0x02000000
 ```
 
 重启后通过串口 XMODEM 把 FIT 传到 `0x02000000`，再 `bootm`。
+
+> TFTP 这次没有走通：`sdk wait_link_status 20` 返回后 `sdk active_port 2` 仍报
+> `link is down`，U-Boot 自动切到 port 4，而 PC 接在 lan2 → TFTP ARP 超时。
+> XMODEM 是当前更可靠的通道（28,359 块 / 385 秒）。
 传输 28,359 块 / 385 秒，EOT ACK，串口日志：
 [`test_logs/kernel-6.18.60-xmodem.log`](../../../test_logs/kernel-6.18.60-xmodem.log)。
 
