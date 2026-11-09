@@ -256,6 +256,9 @@ Initramfs unpacking failed: decompressor failed
   内核镜像没有真正重建。
 
 结论：这不是 6.18 内核的问题，是 **内核镜像构建缓存/内置 initramfs 没清干净**。
+本次在 Ubuntu 上强制重建（删 `vmlinux` / `zImage` 后重跑）因磁盘 I/O 超时被中断，
+没有产出新的 zImage；后续建议用 `nohup` 跑完整重建并确认构建时间。
+
 下次重试前需要：
 
 ```sh
