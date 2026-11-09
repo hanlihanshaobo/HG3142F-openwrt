@@ -165,23 +165,80 @@ bcm_enet.ko vermagic=6.18.60 SMP mod_unload ARMv7 p2v8
 > 都超过 `bootfs1` 约 **6.07 MB** 的内核预算。CI 内核的压缩/调试配置与本地不同
 > （本地 `zImage` 3.62 MB，`CONFIG_KERNEL_XZ` + `CONFIG_DEBUG_INFO_REDUCED`）。
 > 给 slot1 打 FIT 时：
-> - **优先用本地 `test_images/kernel-6.18.60/zImage`（3.62 MB，尺寸合适；实机启动仍待验证）**；
+> - **优先用本地 `test_images/kernel-6.18.60/zImage`（3.62 MB，已实机 RAM 启动验证）**；
 > - 或者显式把 `CONFIG_KERNEL_XZ=y` / `CONFIG_DEBUG_INFO_REDUCED=y` 写进 target config，
 >   再重跑 CI 让 `zImage-nodtb` 缩到预算内。
 >
 > 直接用 CI 的 6.65 MB zImage 打 FIT 会超出 bootfs1 容量，不要这么做。
 
-## 五、未覆盖的测试
+## 五、实机 RAM 启动验证（2026-11-09）
 
-- **实机启动** 未做：本次只验证编译、镜像和模块 ABI，不写 NAND、不改设备槽位。
-- 2.5G / LAN / PON 等运行时功能需要在设备上单独验证。
+用本地产物打 FIT：
 
-## 六、结论与下一步
+```text
+test_images/kernel-6.18.60/kernel-6.18.60.itb   3,629,858 B
+  kernel: zImage 3,620,632 B（6.18.60）
+  fdt:    bcm96855-mb4784w.dtb 8,432 B
+```
 
-1. 6.18.60 的本地构建和 GitHub Actions 完整构建均已通过。
-2. 目前只差实机启动验证；建议先在 slot1 或 RAM 中验证 `Linux version 6.18.60`
-   和 `bcm_enet.ko` 加载，再决定是否合并。
-3. 实机通过后合并：
+启动方式：**不改 NAND、不写槽位**。设置 U-Boot：
+
+```text
+once=run rz_win
+rz_win=echo XMODEM-WINDOW;loadx 0x02000000;bootm 0x02000000
+```
+
+重启后通过串口 XMODEM 把 FIT 传到 `0x02000000`，再 `bootm`。
+传输 28,359 块 / 385 秒，EOT ACK，串口日志：
+[`test_logs/kernel-6.18.60-xmodem.log`](../../../test_logs/kernel-6.18.60-xmodem.log)。
+
+关键证据：
+
+```text
+## Total Size      = 0x00376322 = 3629858 Bytes
+Starting kernel ...
+[    0.000000] Linux version 6.18.60 (zhang@ubuntu-op) ... #1 SMP
+[    1.239201] VFS: Mounted root (squashfs filesystem) readonly on device 254:0.
+[    1.241016] Run /sbin/init as init process
+[    8.979014] procd: - early -
+[    9.574603] procd: - init -
+```
+
+启动后串口 shell 实测：
+
+```text
+root@HG3142F:/# uname -a
+Linux HG3142F 6.18.60 #1 SMP Thu Nov 5 22:40:34 CST 2026 armv7l GNU/Linux
+root@HG3142F:/# cat /proc/version
+Linux version 6.18.60 (zhang@ubuntu-op) ...
+root@HG3142F:/# cat /proc/cmdline
+... ubi.mtd=image ubi.block=0,4 root=/dev/ubiblock0_4 rootfstype=squashfs
+```
+
+说明：
+
+- 根文件系统用的是设备现有的 **OpenWrt 21.02.7**（B1-b 的 rootfs），不是 6.18 配套 rootfs；
+  因此 `/etc/modules.d` 里的 4.19 模块大量 `Unknown symbol`，包括 `bcm_enet` / `bcm_pcie`，
+  本次没有网络，只有串口 shell。内核本身启动、挂 rootfs、procd、init 全部正常。
+- 这次验证的是 **6.18.60 内核 + 厂商 U-Boot + 现有 rootfs** 的最小启动链。
+- 恢复：在 6.18 shell 执行 `echo b > /proc/sysrq-trigger`，设备回到 U-Boot；
+  `rz_win` 窗口超时后启动 slot2 厂商固件，再用 `/fh_tool/api` + telnet root 把
+  `once` 改回 `run rz_img1`，重启回到 B1-b（4.19.235）。恢复日志：
+  [`test_logs/kernel-6.18.60-recover.log`](../../../test_logs/kernel-6.18.60-recover.log)。
+
+## 六、未覆盖的测试
+
+- **完整 6.18 用户态**：6.18 配套 rootfs + `bcm_enet`/`bcm_pcie`/`bcm_reboot` 模块尚未一起刷入，
+  所以本次没有验证 2.5G、LAN、PON 等运行时功能。
+- **写 NAND**：本次只 RAM 启动，没有写 slot1。
+
+## 七、结论与下一步
+
+1. 6.18.60 的本地构建、GitHub Actions 完整构建、**实机 RAM 启动**均已通过。
+2. 还差“6.18 配套 rootfs + 模块”的完整系统验证；建议下一步把本地 `zImage` 打进
+   `bootfs1` FIT，配一个新的 6.18 rootfs 和 `bcm_enet`/`bcm_pcie` 模块，再做一次
+   slot1 启动（保留 slot2 厂商固件回退）。
+3. 完整系统验证通过后合并：
 
    ```bash
    git checkout main
