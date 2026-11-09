@@ -11,6 +11,8 @@ LOCK="$REPO_ROOT/port/sources.lock.json"
 
 SRC_URL=$(python3 -c "import json;print(json.load(open('$LOCK'))['openwrt']['url'])")
 SRC_REF=${OPENWRT_REF_OVERRIDE:-$(python3 -c "import json;print(json.load(open('$LOCK'))['openwrt']['commit'])")}
+KERNEL_SERIES=$(python3 -c "import json;print(json.load(open('$LOCK'))['openwrt']['kernel'])")
+KERNEL_EXPECTED=$(python3 -c "import json;print(json.load(open('$LOCK'))['openwrt'].get('kernel_version',''))")
 
 echo "==> OpenWrt: $SRC_URL @ $SRC_REF"
 echo "==> 目标目录: $DEST"
@@ -27,6 +29,33 @@ else
 	# 按 commit sha 浅拉，比全量 clone 快一个数量级
 	git -C "$DEST" fetch --depth 1 origin "$SRC_REF"
 	git -C "$DEST" checkout -q -b "port/mb4784w" FETCH_HEAD
+fi
+
+# 内核基线自检：锁文件里的 kernel_version 必须与 pin 到的上游源码一致。
+# 这样以后升级内核时，忘记同步 sources.lock.json 会在这里直接失败，而不是在 CI 深处报错。
+KERNEL_FILE="$DEST/target/linux/generic/kernel-$KERNEL_SERIES"
+if [ ! -f "$KERNEL_FILE" ]; then
+	if [ -n "${OPENWRT_REF_OVERRIDE:-}" ]; then
+		# workflow_dispatch 的实验通道：允许覆盖到别的 kernel series，只提示不拦截
+		echo "警告: 覆盖的 OpenWrt commit 没有 $KERNEL_FILE，跳过内核基线检查" >&2
+	else
+		echo "错误: 上游源码没有 $KERNEL_FILE（kernel series=$KERNEL_SERIES）" >&2
+		exit 1
+	fi
+else
+	KERNEL_ACTUAL=$(sed -n "s/^LINUX_VERSION-$KERNEL_SERIES *= *\.\([0-9][0-9]*\).*/\1/p" "$KERNEL_FILE")
+	echo "==> 内核基线: Linux $KERNEL_SERIES.${KERNEL_ACTUAL:-?}"
+	if [ -n "$KERNEL_EXPECTED" ]; then
+		KERNEL_EXPECTED_PATCH=${KERNEL_EXPECTED##*.}
+		if [ "$KERNEL_ACTUAL" != "$KERNEL_EXPECTED_PATCH" ]; then
+			if [ -n "${OPENWRT_REF_OVERRIDE:-}" ]; then
+				echo "警告: 覆盖的 OpenWrt commit 内核是 $KERNEL_SERIES.${KERNEL_ACTUAL:-?}，锁文件期望 $KERNEL_EXPECTED" >&2
+			else
+				echo "错误: sources.lock.json 要求 $KERNEL_EXPECTED，但上游 pin 是 $KERNEL_SERIES.${KERNEL_ACTUAL:-?}" >&2
+				exit 1
+			fi
+		fi
+	fi
 fi
 
 echo "==> 叠加 overlay（target/linux/bcmbca、base-files 等）"
