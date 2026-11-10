@@ -162,14 +162,12 @@ bcm_enet.ko vermagic=6.18.60 SMP mod_unload ARMv7 p2v8
 | `undefined_symbols.txt` | 0 B | 无未决符号 |
 
 > **尺寸注意**：CI 的 `zImage-nodtb` 是 **6.65 MB**，完整构建的 `Image.lzo` 是 **10.4 MB**，
-> 都超过 `bootfs1` 约 **6.07 MB** 的内核预算。CI 内核的压缩/调试配置与本地不同
-> （本地 `zImage` 3.62 MB，`CONFIG_KERNEL_XZ` + `CONFIG_DEBUG_INFO_REDUCED`）。
-> 给 slot1 打 FIT 时：
-> - **优先用本地 `test_images/kernel-6.18.60/zImage`（3.62 MB，已实机 RAM 启动验证）**；
-> - 或者显式把 `CONFIG_KERNEL_XZ=y` / `CONFIG_DEBUG_INFO_REDUCED=y` 写进 target config，
->   再重跑 CI 让 `zImage-nodtb` 缩到预算内。
+> 都超过 `bootfs1` 约 **6.07 MB** 的内核预算。原因是 CI 走默认 gzip 压缩，而本地
+> 构建用 `CONFIG_KERNEL_XZ`（`zImage` 3.62 MB）。
 >
-> 直接用 CI 的 6.65 MB zImage 打 FIT 会超出 bootfs1 容量，不要这么做。
+> **已修**：把 `CONFIG_KERNEL_XZ=y` 写进 `port/configs/mb4784w.config`，
+> 之后 CI 的 `zImage-nodtb` 也会落到 ~3.6 MB，可直接打进 bootfs1 FIT。
+> 本次落盘验证先用的是本地 `test_images/kernel-6.18.60/zImage`。
 
 ## 五、实机 RAM 启动验证（2026-11-09）
 
@@ -268,19 +266,183 @@ make -j2 ARCH=arm CROSS_COMPILE=... zImage
 # 启动日志里的 Linux version 构建时间必须是新时间
 ```
 
+### 6.1 U-Boot 直接刷写评估
+
+从 bootfs1 提取 U-Boot 后确认有：
+
+```text
+flash_bootfs_raw <bootfs binary> [img]
+flash_rootfs_raw <rootfs binary> [img]
+```
+
+但实现是：
+
+```text
+tftp <addr> <file>
+ubi check rootfs%d
+ubi remove rootfs%d
+ubi create rootfs%d <size> dynamic <id>
+ubi write <addr> rootfs%d <size>
+ubi detach
+```
+
+问题：
+
+- 底层仍是 U-Boot `ubi write`，之前实测会静默产生 `ECC error -74`；
+- 必须先 TFTP；当前 `sdk active_port 2` 在 100M 链路上仍报 link down，PC 在 lan2 时 TFTP 过不去；
+- remove/create 可能改变卷 ID，和内核 `root=/dev/ubiblock0_4` 冲突。
+
+因此**没有用这条路径**写 rootfs1。
+
+### 6.2 c_noubi initramfs 写入 rootfs1（成功）
+
+把 PC 网线从 LAN2 换到 **2.5G 口（RTL8125）** 后，c_noubi initramfs
+（`c_noubi.fit`，6.18.55，XMODEM 713 秒）的网络可用：
+
+```text
+bcm-pcie: Core [1] Link UP - GEN2
+r8169 0002:01:00.0 eth0: RTL8125B
+br-lan: 192.168.1.1/24
+```
+
+在 initramfs 里执行：
+
+```sh
+ubiattach -m 1
+wget -q http://192.168.1.113:9000/root.squashfs -O /tmp/root.sq
+sha256sum /tmp/root.sq
+# 451586d02ce3efb0337d1f25edd686f22f99bc80a279c9020a4bfa61d41bbf26
+ubiupdatevol /dev/ubi0_4 /tmp/root.sq
+dd if=/dev/ubi0_4 bs=3310478 count=1 | sha256sum
+# 451586d02ce3efb0337d1f25edd686f22f99bc80a279c9020a4bfa61d41bbf26
+```
+
+**rootfs1 已成功写入 CI 的 6.18 rootfs，并回读校验一致。**
+
+### 6.3 bootfs1 写入与 boot loop（失败 → 恢复）
+
+最初把 CI 的 6.65 MB `zImage` FIT 写进 bootfs1 时，`bootm` 后反复重启：slot1 的
+bootfs1 仍是厂商 4.19，但 rootfs1 已经是 6.18 rootfs，4.19 内核挂不上 6.18
+squashfs（`ubi.block=0,4` 内容已变）→ 内核 panic → WDT 复位，形成 boot loop。
+
+> 教训：**bootfs 和 rootfs 必须成对替换**。只换 rootfs 会让旧内核挂新文件系统。
+
+恢复靠 U-Boot env 的免网入口（上电按住 RESET）：
+
+```text
+rz_rec=echo RECOVERY-WINDOW;ubi part image;
+       if ubi read 0x02000000 recovery-bootfs; then bootm 0x02000000;
+       else echo NO-RECOVERY;loadx 0x02000000;bootm 0x02000000; fi
+```
+
+`recovery-bootfs`（ubi0_8）里的 initramfs（4.19.235）能起来，带 `ubiupdatevol`
+和 `nc`，是本次实际使用的救援通道。
+
+注意 recovery initramfs 里的两个坑：
+
+- `ubiattach -m 1` 会把已 attach 的 mtd1 再 attach 成 ubi1 并报 `ECC error -74`；
+  **不要重复 attach**，直接用 `/dev/ubi0_3` / `/dev/ubi0_4`；
+- `wget` / `uclient-fetch` 连 192.168.1.113 一律 `Failed to send request: Operation not permitted`
+  （ping 正常、`nc` 正常），最终用 `nc 192.168.1.113 9002 > b1.fit` 裸流传输，
+  sha256 与 PC 侧一致。
+
+### 6.4 bootfs1 写入 6.18 FIT（成功）
+
+用本地 3.62 MB `zImage` 打的 `bootfs1-6.18.60.fit`（8,516,082 B，
+sha `9cefa0243a7796048017daa125b484022ec860242315ae981e0c7f0e9a3ea602`）：
+
+```sh
+nc 192.168.1.113 9002 < /dev/null > /tmp/b1.fit
+sha256sum /tmp/b1.fit
+ubiupdatevol /dev/ubi0_3 /tmp/b1.fit
+dd if=/dev/ubi0_3 bs=8516082 count=1 | sha256sum   # 与上面一致
+echo 'once=run rz_img1' > /proc/nvram/set
+sync
+reboot -f
+```
+
+### 6.5 完整 6.18.60 从 NAND 启动（成功）
+
+```text
+Linux version 6.18.60 (zhang@ubuntu-op) ... #1 SMP Thu Nov  5 22:40:34 CST 2026
+OpenWrt SNAPSHOT, r0-5fb9d9c
+DISTRIB_TARGET='bcmbca/generic'
+VFS: Mounted root (squashfs filesystem) readonly on device 254:0.
+mount_root: switching to ubifs overlay
+bcm-pcie: Core [0]/[1] Link UP - [1] lanes, [GEN2] speed
+```
+
+日志：[`test_logs/kernel-6.18.60-overlay-boot.log`](../../../test_logs/kernel-6.18.60-overlay-boot.log)
+（第一次落盘启动的完整串口记录是 `test_logs/kernel-6.18.60-boot-from-nand.log`，
+但那次抓取脚本在 `reboot` 后只收到 shell 回显，实际启动日志以上面这份为准）。
+
+### 6.6 模块不匹配（已定位 → 已修）
+
+CI rootfs 里没有 `realtek.ko` / `hwmon.ko` / `i2c-core.ko`，导致：
+
+```text
+r8169 ... no dedicated PHY driver found for PHY ID 0x001cc840
+hwmon: Unknown symbol i2c_verify_client (err -2)
+```
+
+根因不是内核配置漂移，而是 **`DEVICE_PACKAGES` 漏了 `kmod-phy-realtek`**：
+该包 `DEPENDS=+kmod-libphy +kmod-hwmon-core`，而 `kmod-hwmon-core`
+`DEPENDS=+kmod-i2c-core`，三个模块必须一起进 rootfs。已在
+`port/overlay/target/linux/bcmbca/image/Makefile` 补上。
+
+现场验证时先用“救急”方式把本地同配置构建的四个 ko 塞进 overlay：
+
+```sh
+mount -t ubifs /dev/ubi0_0 /mnt
+mkdir -p /mnt/upper/lib/modules/6.18.60
+cp i2c-core.ko hwmon.ko realtek.ko r8169.ko /mnt/upper/lib/modules/6.18.60/
+sync; umount /mnt; reboot -f
+```
+
+启动后：
+
+```text
+hwmon     20480  1 realtek
+i2c_core  40960  1 hwmon
+realtek   45056  1
+r8169     90112  0
+Realtek Internal NBASE-T PHY r8169-2-100:00: attached PHY driver
+r8169 0002:01:00.0 eth0: RTL8125B
+```
+
+### 6.7 网络实测（成功）
+
+```text
+eth0 carrier=1
+r8169 ... Link is Up - 100Mbps/Full (downshifted) - flow control rx/tx
+  ↑ "Downshift occurred from negotiated speed 1Gbps to actual speed 100Mbps, check cabling!"
+
+LuCI : HTTP 200 / root 从 192.168.1.113 登录成功
+SSH  : root@192.168.1.1 免密登录，uname=6.18.60
+ubus : model="FiberHome HG3142F", board_name="fiberhome,mb4784w"
+吞吐 : dd 52,428,800 B / 4.46 s = 11.76 MB/s ≈ 94.1 Mbps（100M 线速）
+```
+
+100M 是**本次线缆/水晶头问题**（同一根线插 LAN2 时是 1000/full，插 2.5G 口时
+PHY 报 1G 协商后降速到 100M），不是驱动问题；PHY 已正常挂上
+`Realtek Internal NBASE-T PHY`，换线后可再验 1G/2.5G。
+
 ## 七、未覆盖的测试
 
-- **完整 6.18 用户态**：6.18 配套 rootfs + `bcm_enet`/`bcm_pcie`/`bcm_reboot` 模块尚未一起刷入，
-  所以本次没有验证 2.5G、LAN、PON 等运行时功能。
-- **写 NAND**：本次只 RAM 启动，没有写 slot1。
+- **2.5G 速率**：PC 侧只有千兆网卡，且当前线缆在 2.5G 口降速到 100M，缺 2.5G 对端。
+- **LAN1-4 / PON**：`bcm_enet` 交换与 PON 未在本轮启用/验证。
+- **`bcm_enet`/`bcm_pcie`/`bcm_reboot` 树外模块**：已编译、vermagic 正确，但没有装进
+  6.18 rootfs 做实机加载验证（本轮 2.5G 口走的是主线 `r8169` + `kmod-bcm-pcie`
+  的 PCIe 主控，未加载 `bcm_pcie.ko`）。
 
 ## 八、结论与下一步
 
-1. 6.18.60 的本地构建、GitHub Actions 完整构建、**实机 RAM 启动**均已通过。
-2. 还差“6.18 配套 rootfs + 模块”的完整系统验证；建议下一步把本地 `zImage` 打进
-   `bootfs1` FIT，配一个新的 6.18 rootfs 和 `bcm_enet`/`bcm_pcie` 模块，再做一次
-   slot1 启动（保留 slot2 厂商固件回退）。
-3. 完整系统验证通过后合并：
+1. 6.18.60 的本地构建、GitHub Actions 完整构建、**实机 RAM 启动**、
+   **bootfs1 + rootfs1 成对落盘启动**、**PCIe/2.5G 口网络（LuCI/SSH/吞吐）**均已通过。
+2. `DEVICE_PACKAGES` 已补 `kmod-phy-realtek`，但需要重跑一次 CI 让 rootfs 自带
+   `realtek/hwmon/i2c-core`，才能去掉现场塞 overlay 的临时步骤。
+3. 建议合并前再跑一次 CI 完整构建 + 一次干净刷写（不带 overlay 补丁）确认。
+4. 完整系统验证通过后合并：
 
    ```bash
    git checkout main
