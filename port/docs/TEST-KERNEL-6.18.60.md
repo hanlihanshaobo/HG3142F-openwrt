@@ -436,14 +436,62 @@ PHY 报 1G 协商后降速到 100M），不是驱动问题；PHY 已正常挂上
   6.18 rootfs 做实机加载验证（本轮 2.5G 口走的是主线 `r8169` + `kmod-bcm-pcie`
   的 PCIe 主控，未加载 `bcm_pcie.ko`）。
 
-## 八、结论与下一步
+## 九、CI #104：packaging 修复验证（成功）
+
+- 提交：`d31b0d6`
+- 运行：https://github.com/hanlihanshaobo/HG3142F-openwrt/actions/runs/42744351073
+- 结论：**success**（29m32s，缓存命中）
+- 产物：`openwrt-mb4784w-104`
+
+关键核对：`DEVICE_PACKAGES` 已含 `kmod-phy-realtek`（构建日志里可见），
+解包 `root.squashfs` 确认：
+
+```text
+/lib/modules/6.18.60/realtek.ko   55,236 B
+/lib/modules/6.18.60/hwmon.ko     19,964 B
+/etc/modules.d/18-phy-realtek
+/etc/modules.d/51-i2c-core
+```
+
+### 9.1 CI 模块在实机内核上的加载验证
+
+把上面的 `realtek.ko` / `hwmon.ko` 从 `root.squashfs` 取出，`nc` 传到设备 `/tmp`，
+先 `rmmod r8169 realtek hwmon`，再按顺序 `insmod`：
+
+```text
+hwmon_rc=0
+realtek_rc=0
+r8169_rc=0
+Realtek Internal NBASE-T PHY r8169-2-100:00: attached PHY driver
+r8169 0002:01:00.0 eth0: Link is Up - 100Mbps/Full
+br-lan: port 1(eth0) entered forwarding state
+```
+
+结论：
+
+- **CI rootfs 自带的 `realtek.ko` + `hwmon.ko` 能直接挂 PHY**，不再需要往 overlay
+  塞本地模块；
+- 唯一还需要的是 `i2c-core.ko`，因为本机测试内核是 `CONFIG_I2C=m`
+  （CI 内核按仓库 `config-6.18` 是 `CONFIG_I2C=y`，符号在内核里，不需要模块）。
+  这也说明“CI 模块在本机内核缺 `i2c_verify_client`”是**本机内核配置偏差**，
+  不是仓库问题。
+
+### 9.2 尚未做的一步
+
+`root.squashfs`（sha `3e7e7ad2…`）还没重新写进 rootfs1；当前设备跑的仍是
+#101 的 rootfs + overlay 里的本地模块。因为 9.1 已经验证模块可用，重刷只是
+把 overlay 补丁去掉，功能上等价，可留到下次维护窗口。
+
+## 十、结论与下一步
 
 1. 6.18.60 的本地构建、GitHub Actions 完整构建、**实机 RAM 启动**、
-   **bootfs1 + rootfs1 成对落盘启动**、**PCIe/2.5G 口网络（LuCI/SSH/吞吐）**均已通过。
-2. `DEVICE_PACKAGES` 已补 `kmod-phy-realtek`，但需要重跑一次 CI 让 rootfs 自带
-   `realtek/hwmon/i2c-core`，才能去掉现场塞 overlay 的临时步骤。
-3. 建议合并前再跑一次 CI 完整构建 + 一次干净刷写（不带 overlay 补丁）确认。
-4. 完整系统验证通过后合并：
+   **bootfs1 + rootfs1 成对落盘启动**、**PCIe/2.5G 口网络（LuCI/SSH/94 Mbps）**、
+   **CI rootfs 自带 PHY 驱动加载**均已通过。
+2. 待完善（不影响合并）：
+   - 2.5G 口当前只协商 100M，dmesg 报 `check cabling!`，需换线/换口复测；
+   - 用 #104 的 rootfs 重刷一次，去掉 overlay 里的本地模块；
+   - 追查 CI `zImage-nodtb` 比本地大 3 MB 的原因（两者都是 XZ）。
+3. 合并：
 
    ```bash
    git checkout main
@@ -451,4 +499,4 @@ PHY 报 1G 协商后降速到 100M），不是驱动问题；PHY 已正常挂上
    git push origin main
    ```
 
-> 本文档的 CI 结果对应代码提交 `629ebfc`；后续文档提交不改变内核/驱动代码。
+> 本文档的 CI 结果对应代码提交 `d31b0d6`（#104）；后续文档提交不改变内核/驱动代码。
