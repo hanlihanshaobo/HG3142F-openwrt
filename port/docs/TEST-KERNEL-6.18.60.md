@@ -161,13 +161,14 @@ bcm_enet.ko vermagic=6.18.60 SMP mod_unload ARMv7 p2v8
 | `bcm_enet.ko` | 697,068 B | 与 #101 同尺寸 |
 | `undefined_symbols.txt` | 0 B | 无未决符号 |
 
-> **尺寸注意**：CI 的 `zImage-nodtb` 是 **6.65 MB**，完整构建的 `Image.lzo` 是 **10.4 MB**，
-> 都超过 `bootfs1` 约 **6.07 MB** 的内核预算。原因是 CI 走默认 gzip 压缩，而本地
-> 构建用 `CONFIG_KERNEL_XZ`（`zImage` 3.62 MB）。
+> **尺寸注意**：CI 的 `zImage-nodtb` 是 **6.65 MB**，比本地构建的 3.62 MB 大 3 MB。
+> 探针确认两者都是 XZ 压缩（`zImage` 内偏移 0x65E4 处有 `FD 37 7A 58 5A 00`），
+> 所以不是压缩算法差异，而是 CI 内核本身更大（大概率与
+> `CONFIG_DEBUG_INFO=y` / 内置 initramfs 有关，待查）。
 >
-> **已修**：把 `CONFIG_KERNEL_XZ=y` 写进 `port/configs/mb4784w.config`，
-> 之后 CI 的 `zImage-nodtb` 也会落到 ~3.6 MB，可直接打进 bootfs1 FIT。
-> 本次落盘验证先用的是本地 `test_images/kernel-6.18.60/zImage`。
+> 直接拿它打 bootfs1 FIT 会和 ATF + U-Boot（3.1 MB）一起超出槽容量，
+> 因此本次落盘验证用的是本地 `test_images/kernel-6.18.60/zImage`。
+> 后续若要“整包自洽”（CI 内核 + CI rootfs），需要先把这个 3 MB 差查清。
 
 ## 五、实机 RAM 启动验证（2026-11-09）
 
