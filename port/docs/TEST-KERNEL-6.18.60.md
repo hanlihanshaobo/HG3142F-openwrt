@@ -471,26 +471,85 @@ br-lan: port 1(eth0) entered forwarding state
 
 - **CI rootfs 自带的 `realtek.ko` + `hwmon.ko` 能直接挂 PHY**，不再需要往 overlay
   塞本地模块；
-- 唯一还需要的是 `i2c-core.ko`，因为本机测试内核是 `CONFIG_I2C=m`
-  （CI 内核按仓库 `config-6.18` 是 `CONFIG_I2C=y`，符号在内核里，不需要模块）。
-  这也说明“CI 模块在本机内核缺 `i2c_verify_client`”是**本机内核配置偏差**，
-  不是仓库问题。
+- 这次测试内核还是 `CONFIG_I2C=m`，所以额外加了本地 `i2c-core.ko`。后续把内核
+  改成 `CONFIG_I2C=y`（与仓库 `config-6.18` 一致）后就不再需要（见 9.3）。
 
-### 9.2 尚未做的一步
+### 9.2 重刷 #104 rootfs 与 ABI 事故
 
-`root.squashfs`（sha `3e7e7ad2…`）还没重新写进 rootfs1；当前设备跑的仍是
-#101 的 rootfs + overlay 里的本地模块。因为 9.1 已经验证模块可用，重刷只是
-把 overlay 补丁去掉，功能上等价，可留到下次维护窗口。
+把 #104 的 `root.squashfs`（sha `3e7e7ad2…`）和本地 zImage 的新 FIT 一起写进
+bootfs1/rootfs1 后，**所有模块都加载失败**：
+
+```text
+kmodloader: - nf_tables - 1
+nfnetlink: Unknown symbol __stack_chk_guard (err -2)
+hwmon: Unknown symbol __stack_chk_guard (err -2)
+r8169: Unknown symbol __stack_chk_guard (err -2)
+```
+
+原因：本地测试内核的 `.config` 是手工改过的旧配置，里面
+`CONFIG_STACKPROTECTOR_PER_TASK=y`（ARM TLS canary），内核里**没有**全局
+`__stack_chk_guard` 符号；CI 内核是全局 canary，模块都引用这个符号。
+
+> 这类失配的表现是“**所有**模块都报同一个 `Unknown symbol`”，
+> 看到这个模式先查 stack canary / vermagic，而不是逐个模块找依赖。
+
+修法：在本地内核 `.config` 里关掉 per-task canary 并重编：
+
+```sh
+# CONFIG_STACKPROTECTOR_PER_TASK is not set
+make ARCH=arm CROSS_COMPILE=... -j2 zImage
+# 确认 System.map 里有 __stack_chk_guard + __ksymtab___stack_chk_guard
+```
+
+### 9.3 最终落盘状态（干净、无 overlay 补丁）
+
+| 槽位 | 内容 | sha256 |
+|---|---|---|
+| bootfs1 | 本地 6.18.60 zImage（3,636,696 B，global canary，`CONFIG_I2C=y`）+ ATF + U-Boot + DTB，FIT 8,532,146 B | `4356c0b6…` |
+| rootfs1 | CI #104 `root.squashfs`（3,310,458 B） | `3e7e7ad2…` |
+| rootfs_data | 只保留配置，**没有任何手工模块** | — |
+
+启动后实测：
+
+```text
+Linux HG3142F 6.18.60 #8 SMP Tue Nov 10 11:37:17 CST 2026 armv7l
+OpenWrt SNAPSHOT r0-5fb9d9c
+r8169 ... RTL8125B
+Realtek Internal NBASE-T PHY ... attached PHY driver
+br-lan: port 1(eth0) entered forwarding state   (Link is Up - 100Mbps/Full)
+
+lsmod: nf_tables / nft_* / ppp_generic / pppoe / realtek / hwmon 全部加载
+nft list ruleset -> table inet fw4 { ... }        <- 防火墙正常
+LuCI HTTP 200，SSH root 免密登录
+dd|nc: 52,428,800 B / 4.46 s = 11.75 MB/s ≈ 94.0 Mbps
+```
+
+唯一残留报错是 3 个 USB 串口模块：
+
+```text
+usbserial: Unknown symbol usb_alloc_urb ...
+kmodloader: 3 modules could not be probed (- ch341 - ftdi_sio - usbserial)
+```
+
+本机内核 `CONFIG_USB=m`，而 CI rootfs 按 `CONFIG_USB=y` 没带 `usbcore.ko`。
+不影响网络/防火墙；要用 USB 串口时把内核 `CONFIG_USB=y` 或把 usbcore 编成模块即可。
+
+> 根因还是**本地 build_dir 的内核 `.config` 与仓库 `config-6.18` 漂移**
+> （旧 toolchain r33311 + 手工 menuconfig 残留）。彻底修法是
+> `make target/linux/clean` 后让 OpenWrt 重新生成内核配置再编；
+> 本轮先用 `PER_TASK=n` + `I2C=y` 把 ABI 对齐，验证通过。
 
 ## 十、结论与下一步
 
 1. 6.18.60 的本地构建、GitHub Actions 完整构建、**实机 RAM 启动**、
-   **bootfs1 + rootfs1 成对落盘启动**、**PCIe/2.5G 口网络（LuCI/SSH/94 Mbps）**、
-   **CI rootfs 自带 PHY 驱动加载**均已通过。
+   **bootfs1 + rootfs1 成对落盘启动**、**CI rootfs 模块全部加载**、
+   **PCIe/2.5G 口网络（LuCI/SSH/94 Mbps）**、**fw4/nftables** 均已通过。
 2. 待完善（不影响合并）：
    - 2.5G 口当前只协商 100M，dmesg 报 `check cabling!`，需换线/换口复测；
-   - 用 #104 的 rootfs 重刷一次，去掉 overlay 里的本地模块；
-   - 追查 CI `zImage-nodtb` 比本地大 3 MB 的原因（两者都是 XZ）。
+   - USB 串口模块与本地内核 `USB=m` 不匹配（换 `CONFIG_USB=y` 或补 usbcore.ko）；
+   - 本地 build_dir 的内核配置需要从仓库 `config-6.18` 干净重建一次；
+   - CI `zImage-nodtb` 6.65 MB 仍超过 bootfs1 FIT 预算（本地 zImage 3.6 MB 可用），
+     差异来源未查清。
 3. 合并：
 
    ```bash
