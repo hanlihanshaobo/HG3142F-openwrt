@@ -30,11 +30,16 @@ define Device/fiberhome_mb4784w
   DEVICE_DTS := bcm96855-mb4784w
   SUPPORTED_DEVICES := fiberhome,mb4784w
   # kmod-r8169: 板上 PCIe RTL8125(10ec:8125) 2.5G 网口，主线驱动可直接用
+  # kmod-phy-realtek: RTL8125 的 PHY 驱动（realtek.ko）。缺它 r8169 只能报
+  #                   "no dedicated PHY driver found"，eth0 起不来；
+  #                   该包会连带 kmod-hwmon-core + kmod-i2c-core（realtek 6.18
+  #                   用 hwmon 读温度），三者必须与内核同一次构建。
   # kmod-bcm-pcie: Broadcom BCM963xx PCIe 主控（否则 r8169 无总线可挂）
   # watchdog : 喂 /dev/watchdog（brcm,bcm6345-wdt），否则 U-Boot 开的 80s 看门狗会把板子复位
   # kmod-bcm-reboot: 用 BCM7038 WDT 实现 restart handler，否则 reboot 只会 halt（必须断电）
   # uboot-envtools  : fw_setenv/fw_printenv，配合 kmod-mtd-rw 在 Linux 下改 U-Boot 环境变量
-  DEVICE_PACKAGES := kmod-mtd-rw kmod-nand-brcmnand kmod-r8169 kmod-bcm-pcie kmod-bcm-reboot \
+  DEVICE_PACKAGES := kmod-mtd-rw kmod-nand-brcmnand kmod-r8169 kmod-phy-realtek \
+                     kmod-bcm-pcie kmod-bcm-reboot \
                      uboot-envtools watchdog ubi-utils mtd-utils
   IMAGE_SIZE := 60000k
 endef
