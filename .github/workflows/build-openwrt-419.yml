@@ -1,0 +1,96 @@
+name: build-419
+
+# 为厂商 4.19.235 内核构建 OpenWrt 21.02 用户态（只出 rootfs1，不动 bootfs1）
+# 产物：rootfs1-419.squashfs（xz 128K，无 xattr），刷到槽 1 的 ubi0_4
+on:
+  workflow_dispatch:
+    inputs:
+      openwrt_ref:
+        description: 'OpenWrt 21.02.x tag'
+        required: false
+        default: 'v21.02.7'
+
+permissions:
+  contents: read
+
+jobs:
+  rootfs419:
+    name: bcm53xx / OpenWrt 21.02 rootfs
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison g++ gawk \
+            gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev \
+            python3-distutils rsync unzip zlib1g-dev file wget squashfs-tools
+
+      - name: Clone OpenWrt 21.02
+        run: |
+          git clone --depth 1 -b "${{ inputs.openwrt_ref }}" \
+            https://github.com/openwrt/openwrt.git sources/openwrt
+          cd sources/openwrt
+          git log --oneline -1
+
+      - name: Configure bcm53xx generic (userland only)
+        run: |
+          cd sources/openwrt
+          cat > .config <<'EOF'
+          CONFIG_TARGET_bcm53xx=y
+          CONFIG_TARGET_bcm53xx_generic=y
+          CONFIG_TARGET_bcm53xx_generic_DEVICE_generic=y
+          CONFIG_TARGET_MULTI_PROFILE=n
+          CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_luci-ssl=y
+          CONFIG_PACKAGE_luci-app-firewall=y
+          CONFIG_PACKAGE_luci-theme-bootstrap=y
+          CONFIG_PACKAGE_dropbear=y
+          CONFIG_PACKAGE_dnsmasq=y
+          CONFIG_PACKAGE_firewall=y
+          CONFIG_PACKAGE_iptables=y
+          CONFIG_PACKAGE_ip6tables=y
+          CONFIG_PACKAGE_uhttpd=y
+          CONFIG_PACKAGE_netifd=y
+          CONFIG_PACKAGE_block-mount=y
+          CONFIG_PACKAGE_mtd=y
+          CONFIG_PACKAGE_uboot-envtools=y
+          CONFIG_PACKAGE_ubus=y
+          CONFIG_PACKAGE_libustream-openssl=y
+          EOF
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          make defconfig
+          echo "=== target check ==="
+          grep -E '^CONFIG_TARGET_bcm53xx|^CONFIG_TARGET_bcm53xx_generic|DEVICE_generic' .config | head
+          grep -qx 'CONFIG_TARGET_bcm53xx_generic_DEVICE_generic=y' .config \
+            || { echo "::error::bcm53xx generic device 未选中"; exit 1; }
+
+      - name: Build
+        run: |
+          cd sources/openwrt
+          set -o pipefail
+          make -j"$(nproc)" 2>&1 | tee build.log | tail -120 \
+            || make -j1 V=s 2>&1 | tee -a build.log | tail -120
+          echo "build done"
+
+      - name: Pack rootfs squashfs
+        run: |
+          T=$(find sources/openwrt/build_dir -maxdepth 3 -type d -name 'root-bcm53xx' | head -1)
+          echo "ROOT=$T"
+          test -d "$T" || { echo "::error::找不到 root-bcm53xx"; exit 1; }
+          mksquashfs "$T" rootfs1-419.squashfs \
+            -noappend -comp xz -b 128K -Xdict-size 128K -no-xattrs -all-root
+          ls -l rootfs1-419.squashfs
+          sha256sum rootfs1-419.squashfs | tee rootfs1-419.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rootfs1-419
+          path: |
+            rootfs1-419.squashfs
+            rootfs1-419.sha256
+          retention-days: 14
