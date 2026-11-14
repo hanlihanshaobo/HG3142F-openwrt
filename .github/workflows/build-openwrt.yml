@@ -1,4 +1,4 @@
-name: build-openwrt
+﻿name: build-openwrt
 
 # 为厂商 4.19.235 内核构建 OpenWrt 21.02 用户态（只出 rootfs1，不动 bootfs1）
 # 产物：rootfs1-419.squashfs（xz 128K，无 xattr），刷到槽 1 的 ubi0_4
@@ -44,7 +44,6 @@ jobs:
           CONFIG_TARGET_bcm53xx_generic_DEVICE_generic=y
           CONFIG_TARGET_MULTI_PROFILE=n
           CONFIG_PACKAGE_luci=y
-          CONFIG_PACKAGE_luci-ssl=y
           CONFIG_PACKAGE_luci-app-firewall=y
           CONFIG_PACKAGE_luci-theme-bootstrap=y
           CONFIG_PACKAGE_dropbear=y
@@ -58,13 +57,12 @@ jobs:
           CONFIG_PACKAGE_mtd=y
           CONFIG_PACKAGE_uboot-envtools=y
           CONFIG_PACKAGE_ubus=y
-          CONFIG_PACKAGE_libustream-openssl=y
           EOF
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           make defconfig
           # defconfig 可能丢掉 feeds 包，强制再补一次
-          for p in luci luci-base luci-ssl luci-app-firewall luci-theme-bootstrap; do
+          for p in luci luci-base luci-app-firewall luci-theme-bootstrap; do
             grep -q "^CONFIG_PACKAGE_$p=y" .config || echo "CONFIG_PACKAGE_$p=y" >> .config
           done
           yes "" | make defconfig
