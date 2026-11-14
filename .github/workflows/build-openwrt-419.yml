@@ -64,9 +64,11 @@ jobs:
           ./scripts/feeds install -a
           make defconfig
           echo "=== target check ==="
-          grep -E '^CONFIG_TARGET_bcm53xx|^CONFIG_TARGET_bcm53xx_generic|DEVICE_generic' .config | head
-          grep -qx 'CONFIG_TARGET_bcm53xx_generic_DEVICE_generic=y' .config \
-            || { echo "::error::bcm53xx generic device 未选中"; exit 1; }
+          grep -E '^CONFIG_TARGET_bcm53xx|^CONFIG_TARGET_bcm53xx_generic|^CONFIG_TARGET_bcm53xx_generic_DEVICE_' .config | head
+          grep -qx 'CONFIG_TARGET_bcm53xx=y' .config \
+            || { echo "::error::bcm53xx target 未选中"; exit 1; }
+          grep -qx 'CONFIG_TARGET_bcm53xx_generic=y' .config \
+            || { echo "::error::bcm53xx/generic subtarget 未选中"; exit 1; }
 
       - name: Build
         run: |
