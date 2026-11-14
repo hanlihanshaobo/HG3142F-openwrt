@@ -74,8 +74,12 @@ jobs:
         run: |
           cd sources/openwrt
           set -o pipefail
-          make -j"$(nproc)" 2>&1 | tee build.log | tail -120 \
-            || make -j1 V=s 2>&1 | tee -a build.log | tail -120
+          # 只关心 root.squashfs；部分设备镜像分区过小（如 tplink_archer-c5-v2 2MB）
+          # 会在 image 阶段报 "os-image partition too big"，不影响用户态 rootfs
+          make -j"$(nproc)" 2>&1 | tee build.log | tail -120 || true
+          RS=$(find build_dir -name 'root.squashfs' | head -1)
+          echo "root.squashfs=$RS"
+          test -s "$RS" || { echo "::error::root.squashfs 未生成"; exit 1; }
           echo "build done"
 
       - name: Pack rootfs squashfs
