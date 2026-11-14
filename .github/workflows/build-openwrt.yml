@@ -1,4 +1,4 @@
-name: build-419
+name: build-openwrt
 
 # 为厂商 4.19.235 内核构建 OpenWrt 21.02 用户态（只出 rootfs1，不动 bootfs1）
 # 产物：rootfs1-419.squashfs（xz 128K，无 xattr），刷到槽 1 的 ubi0_4
