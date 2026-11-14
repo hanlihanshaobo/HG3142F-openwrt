@@ -63,6 +63,13 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           make defconfig
+          # defconfig 可能丢掉 feeds 包，强制再补一次
+          for p in luci luci-base luci-ssl luci-app-firewall luci-theme-bootstrap; do
+            grep -q "^CONFIG_PACKAGE_$p=y" .config || echo "CONFIG_PACKAGE_$p=y" >> .config
+          done
+          yes "" | make defconfig
+          echo "=== luci check ==="
+          grep -E '^CONFIG_PACKAGE_luci(-base)?=y' .config || { echo "::error::LuCI 未选中"; exit 1; }
           echo "=== target check ==="
           grep -E '^CONFIG_TARGET_bcm53xx|^CONFIG_TARGET_bcm53xx_generic|^CONFIG_TARGET_bcm53xx_generic_DEVICE_' .config | head
           grep -qx 'CONFIG_TARGET_bcm53xx=y' .config \
