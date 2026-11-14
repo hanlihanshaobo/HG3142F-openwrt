@@ -144,7 +144,7 @@ void phy_compat_set_bus(bus_drv_t *bus)
 
 static int phy_compat_read_status(phy_dev_t *phy)
 {
-	uint16_t bmsr = 0, bmcr = 0;
+	uint16_t bmsr = 0, bmcr = 0, stat1000 = 0;
 	int rc;
 
 	if (!phy)
@@ -173,7 +173,14 @@ static int phy_compat_read_status(phy_dev_t *phy)
 
 	phy->link = 1;
 	phy->duplex = (bmcr & BMCR_FULLDPLX) ? PHY_DUPLEX_FULL : PHY_DUPLEX_HALF;
-	if (bmcr & BMCR_SPEED1000)
+
+	/*
+	 * 1000BASE-T 的速率不能只看 BMCR：很多 PHY 自协商到 1G 后 BMCR
+	 * bit6 仍为 0。用 MII_STAT1000(0x0A) 的 1000T FD/HD 位判定。
+	 */
+	if (phy_bus_read(phy, 0x0a, &stat1000) == 0 && (stat1000 & 0x0c00))
+		phy->speed = PHY_SPEED_1000;
+	else if (bmcr & BMCR_SPEED1000)
 		phy->speed = PHY_SPEED_1000;
 	else if (bmcr & BMCR_SPEED100)
 		phy->speed = PHY_SPEED_100;
@@ -195,22 +202,109 @@ static int phy_compat_read_status(phy_dev_t *phy)
  */
 #define PHY_BMCR_PDOWN		0x0800
 #define PHY_BMCR_ANRESTART	0x0200
+#define PHY_BMCR_RESET		0x8000
+#define EGPHY_RDB_ADDR		0x1e
+#define EGPHY_RDB_DATA		0x1f
+
+/*
+ * 以下序列来自厂商内核 brcm_egphy_write() 的反汇编（0xC083835C）：
+ *
+ *   brcm_egphy_write(phy, 0x8000|addr, val):
+ *       brcm_exp_write(phy, 0x7e, 0);      // 0x17=0xf7e, 0x15=0
+ *       brcm_rdb_write(phy, addr & 0x7fff, val);  // 0x1e=addr, 0x1f=val
+ *       brcm_rdb_write(phy, 0x87, 0x8000);        // 0x1e=0x87, 0x1f=0x8000
+ *
+ * 注意 0x1e 是地址、0x1f 是数据；之前的实现写反了，导致 AFE 校准
+ * 从未真正到达 PHY（读回永远是最后写入的值），1000BASE-T 无法工作。
+ */
+static int egphy_exp_write(phy_dev_t *phy, u16 addr, u16 val)
+{
+	if (phy_bus_write(phy, 0x17, 0x0f00 | (addr & 0xff)))
+		return -EIO;
+	return phy_bus_write(phy, 0x15, val);
+}
+
+static int egphy_rdb_write(phy_dev_t *phy, u16 addr, u16 val)
+{
+	if (egphy_exp_write(phy, 0x7e, 0))
+		return -EIO;
+	if (phy_bus_write(phy, EGPHY_RDB_ADDR, addr & 0x7fff))
+		return -EIO;
+	if (phy_bus_write(phy, EGPHY_RDB_DATA, val))
+		return -EIO;
+	if (phy_bus_write(phy, EGPHY_RDB_ADDR, 0x0087))
+		return -EIO;
+	return phy_bus_write(phy, EGPHY_RDB_DATA, 0x8000);
+}
+
+/*
+ * 厂商 _phy_afe()（phy_drv_6846_egphy.c:137）的等价序列。
+ * 1G 链路的 AFE/DSP 校准，缺了它 1000BASE-T 会退到 100M。
+ */
+static int egphy_afe_init(phy_dev_t *phy)
+{
+	static const struct { u16 reg, val; } seq[] = {
+		{ 0x0028, 0x0c30 },	/* DSP clock enable */
+		{ 0x01e5, 0x0000 },	/* AOF off */
+		{ 0x01ea, 0x0bcc },	/* 1g AB symmetry Iq */
+		{ 0x01eb, 0x005e },	/* BCM96855 */
+		{ 0x01e4, 0x233f },	/* LPF BW */
+		{ 0x01ec, 0xad40 },	/* RCAL +6LSB */
+		{ 0x0125, 0x211b },	/* BCM96855 */
+		{ 0x0152, 0x87f6 },	/* rx_on_tune 8 -> 0xf */
+		{ 0x0156, 0x017d },	/* EEE 100TX BW */
+		{ 0x0166, 0x0015 },	/* FFE zero det */
+		{ 0x00b0, 0x0010 },	/* reset R_CAL engine */
+		{ 0x00b0, 0x0000 },	/* release */
+	};
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(seq); i++) {
+		if (egphy_rdb_write(phy, seq[i].reg, seq[i].val))
+			return -EIO;
+	}
+	return 0;
+}
 
 static int phy_compat_power_set(phy_dev_t *phy, int enable)
 {
 	uint16_t bmcr = 0;
-	int rc;
+	int rc, is_egphy;
 
 	if (!phy || !phy->bus_drv)
 		return -ENODEV;
+
+	is_egphy = (phy->phy_drv &&
+		    phy->phy_drv->phy_type == PHY_TYPE_6846_EGPHY);
 
 	rc = phy_bus_read(phy, MII_BMCR, &bmcr);
 	if (rc)
 		return rc;
 
 	if (enable) {
+		/*
+		 * 厂商 mii_init()：先 BMCR_RESET，再写广播，再做 AFE。
+		 * 只清 PDOWN 而不复位/校准，链路会停在 100M。
+		 */
+		if (is_egphy) {
+			phy_bus_write(phy, MII_BMCR, PHY_BMCR_RESET);
+			msleep(100);
+			phy_bus_read(phy, MII_BMCR, &bmcr);
+		}
+
+		/* 10/100 + 1000BASE-T FD 广播 */
+		phy_bus_write(phy, 0x04, 0x01e1);
+		phy_bus_write(phy, 0x09, 0x0200);
+
+		if (is_egphy) {
+			rc = egphy_afe_init(phy);
+			pr_info("bcm-phy: addr %d EGPHY reset+AFE %s (0x04=0x01e1 0x09=0x0200)\n",
+				phy->addr, rc ? "FAILED" : "done");
+		}
+
 		bmcr &= ~PHY_BMCR_PDOWN;
-		bmcr |= PHY_BMCR_ANRESTART;	/* 重新自协商（厂商同款行为） */
+		bmcr |= BMCR_ANENABLE | BMCR_FULLDPLX |
+			BMCR_SPEED1000 | PHY_BMCR_ANRESTART;
 	} else {
 		bmcr |= PHY_BMCR_PDOWN;
 	}
@@ -908,6 +1002,58 @@ static int mdio_v1_probe_dt(void)
 /*  初始化 / 退出（由 bcm_enet.ko 的 module_init 调用）                  */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/*  QEGPHY 控制块（厂商 _phy_cfg）                                      */
+/*  egphy reg = <0x828ba204 0xc>，CTRL 在 +0x8 = 0x828ba20c             */
+/* ------------------------------------------------------------------ */
+#define QEGPHY_CTRL_ADDR	0x828ba20cu
+#define QEG_BIT_PHYAD(v)	(((v) & 0x1fu) << 12)
+
+static void __iomem *qegphy_ctrl;
+static u32 qegphy_ctrl_save;
+
+static void qegphy_ctrl_init(void)
+{
+	u32 v;
+
+	if (qegphy_ctrl)
+		return;
+
+	qegphy_ctrl = ioremap(QEGPHY_CTRL_ADDR, 4);
+	if (!qegphy_ctrl) {
+		pr_err("bcm-phy: ioremap QEGPHY_CTRL failed\n");
+		return;
+	}
+	qegphy_ctrl_save = readl(qegphy_ctrl);
+
+	v = readl(qegphy_ctrl) | BIT(8);	/* PHY_RESET=1 */
+	writel(v, qegphy_ctrl);
+	mdelay(1);
+
+	v = readl(qegphy_ctrl) | BIT(21);	/* PLL 250MHz */
+	writel(v, qegphy_ctrl);
+	mdelay(1);
+
+	v = readl(qegphy_ctrl) & ~(BIT(6) | BIT(0));
+	writel(v, qegphy_ctrl);			/* global pwr / bias on */
+	mdelay(1);
+
+	v = readl(qegphy_ctrl) & ~0x1eu;	/* EXT_PWR_DOWN=0 */
+	v = (v & ~(0x1fu << 12)) | QEG_BIT_PHYAD(2);
+	writel(v, qegphy_ctrl);			/* base_addr=2 */
+	mdelay(1);
+
+	v = readl(qegphy_ctrl) & ~BIT(21);	/* PLL 125MHz */
+	writel(v, qegphy_ctrl);
+
+	v = readl(qegphy_ctrl) & ~BIT(8);	/* release reset */
+	writel(v, qegphy_ctrl);
+	mdelay(1);
+
+	pr_info("bcm-phy: QEGPHY_CTRL 0x%08x -> 0x%08x\n",
+		qegphy_ctrl_save, readl(qegphy_ctrl));
+}
+
 int phy_drv_compat_init(void)
 {
 	if (phy_wq)
@@ -916,6 +1062,9 @@ int phy_drv_compat_init(void)
 	phy_wq = alloc_ordered_workqueue("bcm_phy", 0);
 	if (!phy_wq)
 		return -ENOMEM;
+
+	/* EGPHY 的 PLL/复位/供电序列，1G 链路的前提 */
+	qegphy_ctrl_init();
 
 	/*
 	 * 原厂 PHY 驱动模块（bcm_phy.ko）会自己 phy_driver_set()；我们没有
@@ -950,6 +1099,12 @@ void phy_drv_compat_exit(void)
 	/* C2-a 写过的 QM 寄存器恢复原值、释放 FPM 池（未使能 FPM，安全） */
 	rdp_c3_restore();
 	rdp_c2_restore();
+
+	if (qegphy_ctrl) {
+		writel(qegphy_ctrl_save, qegphy_ctrl);
+		iounmap(qegphy_ctrl);
+		qegphy_ctrl = NULL;
+	}
 
 	if (!phy_wq)
 		return;

@@ -82,7 +82,16 @@ MODULE_PARM_DESC(rdp_c3_rx_ports, "BBH_RX ports p=0..n-1 (default 7)");
 
 static uint rdp_c3_qdest_port = 2;
 module_param_named(rdp_c3_qdest_port, rdp_c3_qdest_port, uint, 0444);
-MODULE_PARM_DESC(rdp_c3_qdest_port, "Q_DEST punt port bit (default 2 = LAN2)");
+MODULE_PARM_DESC(rdp_c3_qdest_port, "target BBH_RX port for punt (default 2 = LAN2)");
+
+/*
+ * 原厂 Q_DEST 基线是 0x1000（bit12），VQ_EN 0x1fbf —— VIQ 12 才是原厂的
+ * CPU 目的地。目标端口的 BBH_RX virtual_queues 默认写 port|port<<8 是早期
+ * 猜法；用本参数可改成 viq|viq<<8，并把 Q_DEST/VQ_EN 的 bit 对到同一个 VIQ。
+ */
+static uint rdp_c3_viq = 12;
+module_param_named(rdp_c3_viq, rdp_c3_viq, uint, 0444);
+MODULE_PARM_DESC(rdp_c3_viq, "CPU VIQ for target port / Q_DEST bit (default 12)");
 
 static uint rdp_c3_watch_secs = 20;
 module_param_named(rdp_c3_watch_secs, rdp_c3_watch_secs, uint, 0444);
@@ -113,7 +122,12 @@ static char *rdp_c3_rxq_data_type = "";
 module_param_named(rdp_c3_rxq_data_type, rdp_c3_rxq_data_type, charp, 0444);
 MODULE_PARM_DESC(rdp_c3_rxq_data_type, "RXQ data type values, comma-separated u32 (empty = no write)");
 
-#define C3_RING_COUNT		8
+/*
+ * rdd_ring_init 只接受 ring_id < 0x1e（0..29）。一次把 0..29 全配成
+ * 合法 RX data ring（16B 项、8 项/环），这样 punt 落到哪个 CPU queue
+ * 都能从对应 ring 的写指针看出来，不必猜 VIQ→ring 映射。
+ */
+#define C3_RING_COUNT		30
 #define C3_RING_ENTRIES		8
 #define C3_RING_ENTRY_SIZE	16
 #define C3_RING_BUF_SIZE	4096
@@ -312,12 +326,29 @@ static int c3_write_ring_table(void)
 			c3_ring_tbl_save[i][0], c3_ring_tbl_save[i][1],
 			c3_ring_tbl_save[i][2], c3_ring_tbl_save[i][3]);
 
-	/* 写 8 项（§5.2） */
+	/*
+	 * 写 8 项。布局由 rdpa.ko:rdd_ring_init(ring_id, type, phys, entries,
+	 * entry_size, irq, ...) 逆出（REA/Ghidra，2026-11-09）：
+	 *
+	 *   +0x0  u8  byte0 = entry_size << 3（RX data ring = 16 → 0x80）
+	 *         u8  byte1 = (entries + 31) >> 5（32 项为单位）
+	 *   +0x2  u16 BE  irq/ring id
+	 *   +0x4  u16     0
+	 *   +0x6  u16 BE  写指针（硬件更新，主机只读）
+	 *   +0x8  u32 BE  ring 物理地址
+	 *   +0xc  u16 BE  读指针（主机更新）
+	 *   +0xe  u16     0
+	 *
+	 * 旧版把 entry_size 写到了 +0x4、byte0 写成 ring id，两处都不对，
+	 * 硬件不会把这个环当成合法 RX data ring。
+	 */
 	for (i = 0; i < C3_RING_COUNT; i++) {
 		u32 id = rdp_c3_ring_id + i;
 		u32 phys = c3_ring_phys + i * C3_RING_BUF_SIZE;
-		u32 w0 = (id & 7) | ((n32 & 0xff) << 8);
-		u32 w1 = swab16((u16)C3_RING_ENTRY_SIZE);
+		u32 w0 = ((C3_RING_ENTRY_SIZE & 0x1f) << 3) |
+			 ((n32 & 0xff) << 8) |
+			 ((u32)swab16((u16)id) << 16);
+		u32 w1 = 0;
 		u32 w2 = swab32(phys);
 		u32 w3 = 0;
 
@@ -337,8 +368,10 @@ static int c3_write_ring_table(void)
 		u32 phys = c3_ring_phys + i * C3_RING_BUF_SIZE;
 		u32 exp[4], got[4];
 
-		exp[0] = (id & 7) | ((n32 & 0xff) << 8);
-		exp[1] = swab16((u16)C3_RING_ENTRY_SIZE);
+		exp[0] = ((C3_RING_ENTRY_SIZE & 0x1f) << 3) |
+			 ((n32 & 0xff) << 8) |
+			 ((u32)swab16((u16)id) << 16);
+		exp[1] = 0;
 		exp[2] = swab32(phys);
 		exp[3] = 0;
 		for (j = 0; j < 4; j++)
@@ -574,6 +607,11 @@ static int c3_write_bbh_rx(void)
 		u32 viq = port | (port << 8);
 		u32 r_id, r_viq, r_30, r_34, r_64, r_ctrl;
 		int target = (port == (rdp_c3_qdest_port & 0x1f));
+
+		if (target) {
+			u32 v = rdp_c3_viq & 0x1f;
+			viq = v | (v << 8);
+		}
 		int ok;
 
 		c3_rx_save[port][0] = readl(p + base + C3_BBH_RX_SBPM_ID);
@@ -666,7 +704,7 @@ static int c3_write_qdest(void)
 {
 	void __iomem *p;
 	u32 old_en, old_dest, new_en, new_dest, rb;
-	u32 bit = 1u << (rdp_c3_qdest_port & 0x1f);
+	u32 bit = 1u << (rdp_c3_viq & 0x1f);
 
 	p = ioremap(C3_QDEST_BASE, 0x1000);
 	if (!p)
@@ -678,8 +716,8 @@ static int c3_write_qdest(void)
 	c3_qdest_save[1] = old_dest;
 	c3_qdest_written = 1;
 
-	pr_info("C3 QDEST baseline: VQ_EN(0x004)=0x%08x Q_DEST(0x4c0)=0x%08x port=%u bit=0x%08x\n",
-		old_en, old_dest, rdp_c3_qdest_port, bit);
+	pr_info("C3 QDEST baseline: VQ_EN(0x004)=0x%08x Q_DEST(0x4c0)=0x%08x port=%u viq=%u bit=0x%08x\n",
+		old_en, old_dest, rdp_c3_qdest_port, rdp_c3_viq & 0x1f, bit);
 
 	/* ① 先关 VIQ 的使能门 */
 	new_en = old_en & ~bit;
