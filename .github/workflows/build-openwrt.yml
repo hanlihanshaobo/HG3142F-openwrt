@@ -44,8 +44,18 @@ jobs:
           CONFIG_TARGET_bcm53xx_generic_DEVICE_generic=y
           CONFIG_TARGET_MULTI_PROFILE=n
           CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_luci-base=y
+          CONFIG_PACKAGE_luci-mod-admin-full=y
+          CONFIG_PACKAGE_luci-mod-network=y
+          CONFIG_PACKAGE_luci-mod-status=y
+          CONFIG_PACKAGE_luci-mod-system=y
           CONFIG_PACKAGE_luci-app-firewall=y
           CONFIG_PACKAGE_luci-theme-bootstrap=y
+          CONFIG_PACKAGE_luci-lib-base=y
+          CONFIG_PACKAGE_luci-lib-jsonc=y
+          CONFIG_PACKAGE_luci-lib-nixio=y
+          CONFIG_PACKAGE_rpcd=y
+          CONFIG_PACKAGE_rpcd-mod-luci=y
           CONFIG_PACKAGE_dropbear=y
           CONFIG_PACKAGE_dnsmasq=y
           CONFIG_PACKAGE_firewall=y
@@ -62,7 +72,7 @@ jobs:
           ./scripts/feeds install -a
           make defconfig
           # defconfig 可能丢掉 feeds 包，强制再补一次
-          for p in luci luci-base luci-app-firewall luci-theme-bootstrap; do
+          for p in luci luci-base luci-mod-admin-full luci-mod-network luci-mod-status luci-mod-system luci-app-firewall luci-theme-bootstrap luci-lib-base luci-lib-jsonc luci-lib-nixio rpcd rpcd-mod-luci; do
             grep -q "^CONFIG_PACKAGE_$p=y" .config || echo "CONFIG_PACKAGE_$p=y" >> .config
           done
           yes "" | make defconfig
