@@ -109,7 +109,7 @@ jobs:
           echo "=== LuCI 完整性检查 ==="
           for f in www/cgi-bin/luci usr/lib/lua/luci/dispatcher.lua \
                    usr/lib/lua/luci/sgi/cgi.lua usr/lib/lua/luci/sgi/uhttpd.lua \
-                   usr/sbin/uhttpd usr/sbin/rpcd; do
+                   usr/sbin/uhttpd sbin/rpcd; do
             test -e "$T/$f" || { echo "::error::缺 $f"; exit 1; }
             echo "  ok $f"
           done
