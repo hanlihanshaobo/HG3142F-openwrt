@@ -50,6 +50,10 @@ jobs:
           CONFIG_PACKAGE_luci-mod-status=y
           CONFIG_PACKAGE_luci-mod-system=y
           CONFIG_PACKAGE_luci-app-firewall=y
+          CONFIG_PACKAGE_luci-app-opkg=y
+          CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+          CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y
+          CONFIG_PACKAGE_luci-i18n-opkg-zh-cn=y
           CONFIG_PACKAGE_luci-theme-bootstrap=y
           CONFIG_PACKAGE_luci-lib-base=y
           CONFIG_PACKAGE_luci-lib-jsonc=y
@@ -72,7 +76,7 @@ jobs:
           ./scripts/feeds install -a
           make defconfig
           # defconfig 可能丢掉 feeds 包，强制再补一次
-          for p in luci luci-base luci-mod-admin-full luci-mod-network luci-mod-status luci-mod-system luci-app-firewall luci-theme-bootstrap luci-lib-base luci-lib-jsonc luci-lib-nixio rpcd rpcd-mod-luci; do
+          for p in luci luci-base luci-mod-admin-full luci-mod-network luci-mod-status luci-mod-system luci-app-firewall luci-app-opkg luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-opkg-zh-cn luci-theme-bootstrap luci-lib-base luci-lib-jsonc luci-lib-nixio rpcd rpcd-mod-luci; do
             grep -q "^CONFIG_PACKAGE_$p=y" .config || echo "CONFIG_PACKAGE_$p=y" >> .config
           done
           yes "" | make defconfig
@@ -102,6 +106,14 @@ jobs:
           T=$(find sources/openwrt/build_dir -maxdepth 3 -type d -name 'root-bcm53xx' | head -1)
           echo "ROOT=$T"
           test -d "$T" || { echo "::error::找不到 root-bcm53xx"; exit 1; }
+          echo "=== LuCI 完整性检查 ==="
+          for f in www/cgi-bin/luci usr/lib/lua/luci/dispatcher.lua \
+                   usr/lib/lua/luci/sgi/cgi.lua usr/lib/lua/luci/sgi/uhttpd.lua \
+                   usr/sbin/uhttpd usr/sbin/rpcd; do
+            test -e "$T/$f" || { echo "::error::缺 $f"; exit 1; }
+            echo "  ok $f"
+          done
+          ls "$T/usr/lib/lua/luci/i18n/" 2>/dev/null | grep -E 'base.zh-cn|firewall.zh-cn' || true
           mksquashfs "$T" rootfs1-419.squashfs \
             -noappend -comp xz -b 128K -Xdict-size 128K -no-xattrs -all-root
           ls -l rootfs1-419.squashfs
